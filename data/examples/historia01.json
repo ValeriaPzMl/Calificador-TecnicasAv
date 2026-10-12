@@ -1,0 +1,279 @@
+{
+  "id": "historia01",
+  "name": "Historia de México - Examen final",
+  "num_options": 5,
+  "student_id_digits": 8,
+  "sections": [
+    {
+      "id": "independencia",
+      "name": "Independencia",
+      "weight": 30,
+      "questions": [
+        {
+          "number": 1,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 2,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 3,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 4,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 5,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 6,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 7,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 8,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 9,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 10,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 11,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 12,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 13,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 14,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 15,
+          "correct_answer": "E",
+          "points": 1
+        }
+      ]
+    },
+    {
+      "id": "reforma",
+      "name": "Reforma y Porfiriato",
+      "weight": 30,
+      "questions": [
+        {
+          "number": 16,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 17,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 18,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 19,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 20,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 21,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 22,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 23,
+          "correct_answer": "C",
+          "points": 1
+        },
+        {
+          "number": 24,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 25,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 26,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 27,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 28,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 29,
+          "correct_answer": "C",
+          "points": 1
+        },
+        {
+          "number": 30,
+          "correct_answer": "E",
+          "points": 1
+        }
+      ]
+    },
+    {
+      "id": "revolucion",
+      "name": "Revolución",
+      "weight": 40,
+      "questions": [
+        {
+          "number": 31,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 32,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 33,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 34,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 35,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 36,
+          "correct_answer": "C",
+          "points": 1
+        },
+        {
+          "number": 37,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 38,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 39,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 40,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 41,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 42,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 43,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 44,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 45,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 46,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 47,
+          "correct_answer": "C",
+          "points": 1
+        },
+        {
+          "number": 48,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 49,
+          "correct_answer": "E",
+          "points": 1
+        },
+        {
+          "number": 50,
+          "correct_answer": "D",
+          "points": 1
+        }
+      ]
+    }
+  ]
+}

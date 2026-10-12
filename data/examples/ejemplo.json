@@ -1,0 +1,179 @@
+{
+  "id": "ejemplo0001",
+  "name": "Examen parcial de Matemáticas",
+  "num_options": 4,
+  "student_id_digits": 6,
+  "sections": [
+    {
+      "id": "algebra",
+      "name": "Álgebra",
+      "weight": 40,
+      "questions": [
+        {
+          "number": 1,
+          "correct_answer": "C",
+          "points": 1
+        },
+        {
+          "number": 2,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 3,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 4,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 5,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 6,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 7,
+          "correct_answer": "C",
+          "points": 1
+        },
+        {
+          "number": 8,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 9,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 10,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 11,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 12,
+          "correct_answer": "D",
+          "points": 1
+        }
+      ]
+    },
+    {
+      "id": "geometria",
+      "name": "Geometría",
+      "weight": 35,
+      "questions": [
+        {
+          "number": 13,
+          "correct_answer": "D",
+          "points": 1.5
+        },
+        {
+          "number": 14,
+          "correct_answer": "A",
+          "points": 1.5
+        },
+        {
+          "number": 15,
+          "correct_answer": "B",
+          "points": 1.5
+        },
+        {
+          "number": 16,
+          "correct_answer": "A",
+          "points": 1.5
+        },
+        {
+          "number": 17,
+          "correct_answer": "D",
+          "points": 1.5
+        },
+        {
+          "number": 18,
+          "correct_answer": "A",
+          "points": 1.5
+        },
+        {
+          "number": 19,
+          "correct_answer": "A",
+          "points": 1.5
+        },
+        {
+          "number": 20,
+          "correct_answer": "B",
+          "points": 1.5
+        },
+        {
+          "number": 21,
+          "correct_answer": "A",
+          "points": 1.5
+        },
+        {
+          "number": 22,
+          "correct_answer": "D",
+          "points": 1.5
+        }
+      ]
+    },
+    {
+      "id": "estadistica",
+      "name": "Estadística",
+      "weight": 25,
+      "questions": [
+        {
+          "number": 23,
+          "correct_answer": "A",
+          "points": 2
+        },
+        {
+          "number": 24,
+          "correct_answer": "B",
+          "points": 2
+        },
+        {
+          "number": 25,
+          "correct_answer": "A",
+          "points": 2
+        },
+        {
+          "number": 26,
+          "correct_answer": "B",
+          "points": 2
+        },
+        {
+          "number": 27,
+          "correct_answer": "C",
+          "points": 2
+        },
+        {
+          "number": 28,
+          "correct_answer": "D",
+          "points": 2
+        },
+        {
+          "number": 29,
+          "correct_answer": "B",
+          "points": 2
+        },
+        {
+          "number": 30,
+          "correct_answer": "A",
+          "points": 2
+        }
+      ]
+    }
+  ]
+}

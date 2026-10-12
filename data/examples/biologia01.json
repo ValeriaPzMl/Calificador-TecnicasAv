@@ -1,0 +1,64 @@
+{
+  "id": "biologia01",
+  "name": "Biología - Quiz de la célula",
+  "num_options": 4,
+  "student_id_digits": 6,
+  "sections": [
+    {
+      "id": "celula",
+      "name": "La célula",
+      "questions": [
+        {
+          "number": 1,
+          "correct_answer": "C",
+          "points": 1
+        },
+        {
+          "number": 2,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 3,
+          "correct_answer": "D",
+          "points": 1
+        },
+        {
+          "number": 4,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 5,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 6,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 7,
+          "correct_answer": "C",
+          "points": 1
+        },
+        {
+          "number": 8,
+          "correct_answer": "A",
+          "points": 1
+        },
+        {
+          "number": 9,
+          "correct_answer": "B",
+          "points": 1
+        },
+        {
+          "number": 10,
+          "correct_answer": "A",
+          "points": 1
+        }
+      ]
+    }
+  ]
+}
