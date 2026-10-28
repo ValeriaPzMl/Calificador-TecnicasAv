@@ -127,6 +127,50 @@ Abre la imagen de revisión para ver qué leyó en cada pregunta. Si el QR de
 una hoja no se puede leer, indica el examen a mano:
 `python -m cli.grade foto.jpg --exam ingles01`.
 
+### 5b. O califica con la cámara, sin tomar fotos
+
+```bash
+python -m cli.scan                 # webcam de la computadora
+python -m cli.scan --camera 1      # otra cámara (o una URL de video)
+python -m cli.scan --dry-run       # sin guardar
+```
+
+Se abre la cámara: pon la hoja frente a ella con las cuatro esquinas a la
+vista y déjala quieta un momento. El contorno se pone verde cuando se ven
+las cuatro esquinas; cuando la lectura sale igual en varios cuadros
+seguidos, la cámara **se cierra sola**, el resultado se guarda y aparece la
+nota con dos opciones: **[N] calificar otro** o **[Q] salir**.
+
+Además de la imagen de revisión se guarda el cuadro capturado. Para que la
+lectura sea buena con una webcam, la hoja debe ocupar casi todo el cuadro.
+
+### 5c. O califica desde el celular (recomendado)
+
+La cámara del celular es mucho mejor que la de una laptop. Con el celular y
+la computadora en la **misma red Wi-Fi**:
+
+```bash
+python -m api.serve
+```
+
+Imprime una dirección (`https://<ip>:8000`) y un QR en la terminal; ábrela
+en el navegador del celular. La primera vez saldrá "la conexión no es
+privada" (el certificado es propio, de la computadora): toca
+*Configuración avanzada → Continuar*. Ahí puedes:
+
+- **Calificar con la cámara en vivo:** igual que `cli.scan`, pero con la
+  cámara del celular. Si tiene varias cámaras, se elige abajo.
+- **Tomar foto:** abre la cámara normal del celular (la mejor calidad).
+- **Subir foto de la galería.**
+
+Al terminar aparece la nota y la imagen de revisión, con **calificar otro**
+o **salir**. Los resultados se guardan en la misma base de datos que usan
+los comandos (marca *Solo probar* para no guardar).
+
+`python -m api.serve --http` arranca sin HTTPS; así el celular solo puede
+tomar o subir fotos (los navegadores no dejan usar la cámara en vivo sin
+HTTPS).
+
 ### 6. Consulta y exporta los resultados
 
 ```bash
@@ -187,9 +231,11 @@ Diagramas:
 
 ```
 models/     qué es un examen y un resultado (sin imágenes ni BD)
-core/       el motor: layout de la hoja, PDF, marcadores, QR, lectura, nota
+core/       el motor: layout de la hoja, PDF, marcadores, QR, lectura, nota,
+            escaneo en vivo
 storage/    base de datos (SQLite por defecto)
 cli/        los comandos de arriba
+api/        API y página para calificar desde el navegador del celular
 tests/      pruebas automáticas con hojas simuladas
 scripts/    utilidades (generar los diagramas)
 docs/       diagramas
@@ -211,6 +257,7 @@ lectura, la nota y las reglas de la base de datos.
 
 ## Estado
 
-Funciona por línea de comandos y está probado con hojas simuladas y con
-fotos reales de celular. Está en desarrollo una versión web con inicio de
-sesión y escaneo en vivo con la cámara.
+Funciona por línea de comandos (con fotos o con la cámara en vivo) y desde
+el navegador del celular en la red local, y está probado con hojas
+simuladas y con fotos reales de celular. Está en desarrollo una versión web
+con inicio de sesión.

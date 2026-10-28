@@ -8,4 +8,6 @@ data/processed/*
 data/sheets/
 data/calificador.db
 data/results/
+data/certs/
 READMEMINE.md
+.pytest_cache

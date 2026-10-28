@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Calificador</title>
+<!--
+  Página de prueba para calificar desde el celular (o la compu). La sirve
+  api/main.py. Dos modos:
+    - Cámara en vivo: getUserMedia → un cuadro a la vez a /api/scan/sessions/{id}/frame
+    - Foto: cámara nativa (capture) o galería → /api/grade
+  La configuración de la cámara está en CAMERA_CONFIG, abajo. Cuando exista
+  el frontend de la fase 5 (React), esta lógica es la que se porta.
+-->
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #fff; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e2dd;
+    --green: #2e8b3e; --red: #c8372d; --orange: #d9780a; --accent: #2e8b3e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --card: #1f1f1d; --text: #ecece8; --muted: #a0a09a; --line: #34342f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .hidden { display: none !important; }
+  button, .btn {
+    display: block; width: 100%; padding: 14px; margin: 8px 0; border: 0; border-radius: 10px;
+    font: 600 1.05rem system-ui, sans-serif; background: var(--accent); color: #fff; cursor: pointer; text-align: center;
+  }
+  button.secondary, .btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  label { display: block; color: var(--muted); font-size: .9rem; margin-top: 10px; }
+  select { width: 100%; padding: 10px; margin-top: 4px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); font-size: 1rem; }
+  .check { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: 1rem; }
+  .note { color: var(--muted); font-size: .88rem; }
+  .warn { color: var(--orange); }
+
+  /* Cámara en vivo */
+  #live { position: fixed; inset: 0; background: #000; display: flex; flex-direction: column; }
+  #live-bar { padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top)); background: rgba(20,20,20,.9); color: #fff; }
+  #live-msg { font-weight: 700; font-size: 1.05rem; }
+  #live-sub { font-size: .85rem; color: #bbb; display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
+  #progress { display: flex; gap: 4px; }
+  #progress span { width: 26px; height: 8px; border-radius: 4px; background: #555; }
+  #progress span.on { background: #4caf50; }
+  #view { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+  #live-actions { display: flex; gap: 8px; padding: 8px 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); background: rgba(20,20,20,.9); }
+  #live-actions select { flex: 1; margin: 0; background: #222; color: #fff; border-color: #444; }
+  #live-actions button { width: auto; margin: 0; padding: 10px 18px; }
+  video { display: none; }
+
+  /* Resultado */
+  .score { font-size: 2.6rem; font-weight: 800; color: var(--green); margin: 0; }
+  .sid { font-size: 1.8rem; font-weight: 700; letter-spacing: .05em; margin: 0; }
+  .sid.bad { color: var(--red); }
+  .k { color: var(--muted); font-size: .85rem; margin-top: 10px; }
+  ul.sections { padding-left: 18px; margin: 6px 0; }
+  #r-review { width: 100%; border-radius: 8px; border: 1px solid var(--line); margin-top: 8px; }
+  .spinner { width: 40px; height: 40px; border: 4px solid var(--line); border-top-color: var(--accent);
+             border-radius: 50%; animation: spin 1s linear infinite; margin: 24px auto; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<main>
+  <!-- Inicio -->
+  <section id="home">
+    <h1>Calificador</h1>
+    <div class="card">
+      <button id="btn-live">Calificar con la cámara en vivo</button>
+      <p id="live-unavailable" class="note warn hidden">
+        La cámara en vivo necesita HTTPS (corre <code>python -m api.serve</code> sin <code>--http</code>).
+        Puedes usar "Tomar foto".
+      </p>
+      <label class="btn secondary" for="in-camera">Tomar foto</label>
+      <input id="in-camera" class="hidden" type="file" accept="image/*" capture="environment">
+      <label class="btn secondary" for="in-gallery">Subir foto de la galería</label>
+      <input id="in-gallery" class="hidden" type="file" accept="image/*">
+      <p class="note">"Tomar foto" usa la cámara normal del celular: da la mejor calidad.</p>
+    </div>
+    <div class="card">
+      <label for="opt-exam">Examen (si el QR no se puede leer)</label>
+      <select id="opt-exam"><option value="">Detectar por el QR</option></select>
+      <label for="opt-page">Tamaño de hoja (solo sin QR)</label>
+      <select id="opt-page"><option value="letter">Carta</option><option value="a4">A4</option></select>
+      <label class="check"><input id="opt-dry" type="checkbox"> Solo probar (no guardar en la BD)</label>
+    </div>
+  </section>
+
+  <!-- Calificando una foto -->
+  <section id="busy" class="hidden">
+    <div class="card" style="text-align:center"><div class="spinner"></div><p>Calificando…</p></div>
+  </section>
+
+  <!-- Error -->
+  <section id="error" class="hidden">
+    <div class="card">
+      <h1>No se pudo calificar</h1>
+      <p id="error-msg"></p>
+      <button id="btn-error-retry">Intentar de nuevo</button>
+      <button class="secondary" data-go-home>Inicio</button>
+    </div>
+  </section>
+
+  <!-- Resultado -->
+  <section id="result" class="hidden">
+    <div class="card">
+      <div id="r-exam" style="font-weight:700"></div>
+      <div id="r-exam-id" class="note"></div>
+      <div class="k">Matrícula</div>
+      <p id="r-sid" class="sid"></p>
+      <div class="k">Nota</div>
+      <p id="r-score" class="score"></p>
+      <ul id="r-sections" class="sections"></ul>
+      <div id="r-ambiguous" class="warn"></div>
+      <div id="r-blank" class="note"></div>
+      <div id="r-dup" class="warn"></div>
+      <div id="r-saved" class="note" style="margin-top:8px"></div>
+      <button id="btn-again">Calificar otro</button>
+      <button class="secondary" data-go-home>Salir</button>
+    </div>
+    <div class="card">
+      <div class="k" style="margin-top:0">Revisión: verde correcta · rojo incorrecta · naranja ambigua · gris en blanco</div>
+      <img id="r-review" alt="Imagen de revisión">
+    </div>
+  </section>
+</main>
+
+<!-- Cámara en vivo (pantalla completa) -->
+<section id="live" class="hidden">
+  <div id="live-bar">
+    <div id="live-msg">Abriendo la cámara…</div>
+    <div id="live-sub"><span id="live-exam">Examen: —</span><span id="progress"></span></div>
+  </div>
+  <canvas id="view"></canvas>
+  <video id="video" playsinline muted></video>
+  <div id="live-actions">
+    <select id="cam-select" aria-label="Cámara"></select>
+    <button id="btn-live-cancel" class="secondary" style="color:#fff;border-color:#555">Salir</button>
+  </div>
+</section>
+
+<script>
+// Configuración de la cámara en vivo. Es lo único que habría que ajustar
+// por dispositivo (o pasar a la configuración de la web en la fase 5).
+const CAMERA_CONFIG = {
+  facingMode: "environment",   // cámara trasera en el celular; en la compu se ignora
+  width: 1920, height: 1080,   // resolución que se le pide (el navegador da la más cercana)
+  sendMaxSide: 1600,           // el cuadro se reduce a esto antes de mandarlo
+  jpegQuality: 0.85,
+  continuousFocus: true,       // pedir enfoque continuo (Android Chrome lo soporta)
+};
+const STATE_COLORS = {
+  buscando_hoja: "#e04848", examen_desconocido: "#e04848",
+  sin_qr: "#ffa000", borrosa: "#ffa000", leyendo: "#4caf50", lista: "#4caf50",
+};
+
+const $ = (id) => document.getElementById(id);
+const screens = ["home", "busy", "error", "result", "live"];
+function show(name) { for (const s of screens) $(s).classList.toggle("hidden", s !== name); }
+
+function options() {
+  return { exam_id: $("opt-exam").value, page: $("opt-page").value, dry_run: $("opt-dry").checked };
+}
+
+let lastMode = null;  // "live" | "camera" | "gallery": para "Calificar otro"
+
+// ---------- Inicio ----------
+async function loadExams() {
+  try {
+    const exams = await (await fetch("/api/exams")).json();
+    for (const e of exams) $("opt-exam").add(new Option(`${e.title} (${e.id})`, e.id));
+  } catch (err) { console.warn("no se pudieron cargar los exámenes", err); }
+}
+
+if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+  $("btn-live").disabled = true;
+  $("live-unavailable").classList.remove("hidden");
+}
+$("btn-live").onclick = () => startLive();
+for (const id of ["in-camera", "in-gallery"]) {
+  $(id).onchange = (ev) => {
+    const file = ev.target.files[0];
+    ev.target.value = "";  // para poder elegir la misma foto otra vez
+    if (file) { lastMode = id === "in-camera" ? "camera" : "gallery"; gradePhoto(file); }
+  };
+}
+document.querySelectorAll("[data-go-home]").forEach((b) => (b.onclick = () => show("home")));
+$("btn-again").onclick = $("btn-error-retry").onclick = () => {
+  if (lastMode === "live") startLive();
+  else $(lastMode === "camera" ? "in-camera" : "in-gallery").click();
+};
+
+// ---------- Foto ----------
+async function gradePhoto(file) {
+  show("busy");
+  const o = options();
+  const form = new FormData();
+  form.append("photo", file);
+  form.append("exam_id", o.exam_id);
+  form.append("page", o.page);
+  form.append("dry_run", o.dry_run);
+  try {
+    const resp = await fetch("/api/grade", { method: "POST", body: form });
+    const data = await resp.json();
+    if (!resp.ok) return showError(data.detail || `Error ${resp.status}`);
+    showResult(data.result);
+  } catch (err) { showError("No hay conexión con el servidor."); }
+}
+
+function showError(msg) { $("error-msg").textContent = msg; show("error"); }
+
+// ---------- Cámara en vivo ----------
+const live = { stream: null, scanId: null, running: false, status: null, wakeLock: null };
+
+async function openCamera(deviceId) {
+  const video = { width: { ideal: CAMERA_CONFIG.width }, height: { ideal: CAMERA_CONFIG.height } };
+  if (deviceId) video.deviceId = { exact: deviceId };
+  else video.facingMode = { ideal: CAMERA_CONFIG.facingMode };
+  const stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+  const track = stream.getVideoTracks()[0];
+  if (CAMERA_CONFIG.continuousFocus && track.getCapabilities?.().focusMode?.includes("continuous")) {
+    try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch (_) {}
+  }
+  const s = track.getSettings();
+  console.info(`cámara: ${track.label} ${s.width}x${s.height}`);
+  return stream;
+}
+
+async function fillCameraSelect(current) {
+  const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+  const sel = $("cam-select");
+  sel.innerHTML = "";
+  cams.forEach((c, i) => sel.add(new Option(c.label || `Cámara ${i + 1}`, c.deviceId)));
+  sel.value = current;
+  sel.classList.toggle("hidden", cams.length < 2);
+}
+
+async function startLive(deviceId) {
+  lastMode = "live";
+  show("live");
+  $("live-msg").textContent = "Abriendo la cámara…";
+  $("live-msg").style.color = "#fff";
+  $("progress").innerHTML = "";
+  try {
+    live.stream = await openCamera(deviceId);
+  } catch (err) {
+    stopCamera();
+    return showError(`No se pudo abrir la cámara: ${err.message}. Revisa el permiso o usa "Tomar foto".`);
+  }
+  const video = $("video");
+  video.srcObject = live.stream;
+  await video.play();
+  fillCameraSelect(live.stream.getVideoTracks()[0].getSettings().deviceId);
+  try { live.wakeLock = await navigator.wakeLock?.request("screen"); } catch (_) {}
+
+  const resp = await fetch("/api/scan/sessions", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(options()),
+  });
+  live.scanId = (await resp.json()).scan_id;
+  live.running = true;
+  live.status = null;
+  requestAnimationFrame(render);
+  sendLoop();
+}
+
+function stopCamera() {
+  live.running = false;
+  live.stream?.getTracks().forEach((t) => t.stop());
+  live.stream = null;
+  live.wakeLock?.release().catch(() => {});
+  live.wakeLock = null;
+}
+
+async function endScan() {
+  stopCamera();
+  if (live.scanId) fetch(`/api/scan/sessions/${live.scanId}`, { method: "DELETE" }).catch(() => {});
+  live.scanId = null;
+}
+
+$("btn-live-cancel").onclick = async () => { await endScan(); show("home"); };
+$("cam-select").onchange = async (ev) => { await endScan(); startLive(ev.target.value); };
+
+// Un cuadro a la vez: se manda el siguiente cuando llega la respuesta del anterior.
+async function sendLoop() {
+  const video = $("video");
+  const grab = document.createElement("canvas");
+  const scanId = live.scanId;
+  while (live.running && live.scanId === scanId) {
+    const scale = Math.min(1, CAMERA_CONFIG.sendMaxSide / Math.max(video.videoWidth, video.videoHeight));
+    grab.width = Math.round(video.videoWidth * scale);
+    grab.height = Math.round(video.videoHeight * scale);
+    grab.getContext("2d").drawImage(video, 0, 0, grab.width, grab.height);
+    const blob = await new Promise((r) => grab.toBlob(r, "image/jpeg", CAMERA_CONFIG.jpegQuality));
+    const form = new FormData();
+    form.append("frame", blob, "frame.jpg");
+    let status;
+    try {
+      const resp = await fetch(`/api/scan/sessions/${scanId}/frame`, { method: "POST", body: form });
+      status = await resp.json();
+      if (!resp.ok) { await endScan(); return showError(status.detail || `Error ${resp.status}`); }
+    } catch (err) {
+      await endScan();
+      return showError("Se perdió la conexión con el servidor.");
+    }
+    if (!live.running) return;
+    live.status = status;
+    updateBar(status);
+    if (status.state === "lista") {
+      await endScan();
+      return showResult(status.result);
+    }
+  }
+}
+
+function updateBar(st) {
+  $("live-msg").textContent = st.message;
+  $("live-msg").style.color = STATE_COLORS[st.state] || "#fff";
+  $("live-exam").textContent = `Examen: ${st.exam_id || "—"}`;
+  $("progress").innerHTML = Array.from({ length: st.needed },
+    (_, i) => `<span class="${i < st.progress ? "on" : ""}"></span>`).join("");
+}
+
+// Dibuja el video con el contorno de la hoja según el último estado.
+function render() {
+  if (!live.running) return;
+  const video = $("video"), view = $("view");
+  if (video.videoWidth) {
+    if (view.width !== video.videoWidth) { view.width = video.videoWidth; view.height = video.videoHeight; }
+    const ctx = view.getContext("2d");
+    ctx.drawImage(video, 0, 0);
+    const st = live.status;
+    if (st) {
+      const sx = view.width / st.frame_size[0], sy = view.height / st.frame_size[1];
+      const color = STATE_COLORS[st.state] || "#fff";
+      const lw = Math.max(3, view.width / 300);
+      ctx.strokeStyle = ctx.fillStyle = color;
+      ctx.lineWidth = lw;
+      const pts = st.corner_order.filter((k) => st.corners[k]).map((k) => [st.corners[k][0] * sx, st.corners[k][1] * sy]);
+      if (pts.length === 4) {
+        ctx.beginPath();
+        pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.lineWidth = lw * 2;
+        ctx.stroke();
+      }
+      for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, lw * 4, 0, 2 * Math.PI); ctx.fill(); }
+    }
+  }
+  requestAnimationFrame(render);
+}
+
+// ---------- Resultado ----------
+const fmt = (n) => (Math.round(n * 100) / 100).toString();
+
+function showResult(r) {
+  $("r-exam").textContent = r.exam.name;
+  $("r-exam-id").textContent = `Examen ${r.exam.id}` + (r.qr_read ? "" : " (QR no leído: se usó el examen elegido)");
+  $("r-sid").textContent = r.student_id_raw + (r.student_id ? "" : "  ← incompleta");
+  $("r-sid").classList.toggle("bad", !r.student_id);
+  $("r-score").textContent = `${fmt(r.final_score)} / ${fmt(r.max_score)}`;
+  $("r-sections").innerHTML = "";
+  for (const s of r.sections) {
+    const li = document.createElement("li");
+    li.textContent = `${s.name}: ${fmt(s.points)}/${fmt(s.max_points)} (${Math.round(s.percent)}%)` +
+      (s.weight != null ? ` · vale ${fmt(s.weight)}%` : "");
+    $("r-sections").append(li);
+  }
+  $("r-ambiguous").textContent = r.ambiguous.length ? `Ambiguas (valen 0, revisar): ${r.ambiguous.join(", ")}` : "";
+  $("r-blank").textContent = r.blank.length ? `En blanco: ${r.blank.join(", ")}` : "";
+  $("r-dup").textContent = r.duplicates
+    ? `Esta matrícula ya tenía ${r.duplicates} resultado(s): elige cuál cuenta con cli.results.` : "";
+  $("r-saved").textContent = r.saved ? "Guardado en la BD." : "Sin guardar (solo prueba).";
+  $("r-review").src = r.review_image || "";
+  show("result");
+  window.scrollTo(0, 0);
+}
+
+loadExams();
+</script>
+</body>
+</html>

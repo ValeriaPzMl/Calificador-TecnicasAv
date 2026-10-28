@@ -83,9 +83,15 @@ def bubble_fill(gray: np.ndarray, layout: SheetLayout, bubble: Bubble) -> float:
     patch = gray[y0:int(cy) + half, x0:int(cx) + half]
     paper = float(np.percentile(patch, PAPER_PERCENTILE)) if patch.size else 255.0
 
-    mask = np.zeros(gray.shape, np.uint8)
-    cv2.circle(mask, (round(cx), round(cy)), max(1, round(r * FILL_MASK_RATIO)), 255, -1)
-    inner = cv2.mean(gray, mask=mask)[0]
+    # El círculo se dibuja sobre un recorte del tamaño de la burbuja y no
+    # sobre una máscara de toda la hoja: mismos píxeles, ~20 veces más
+    # rápido (importa en el escaneo en vivo).
+    icx, icy, ir = round(cx), round(cy), max(1, round(r * FILL_MASK_RATIO))
+    mx0, my0 = max(0, icx - ir - 1), max(0, icy - ir - 1)
+    region = gray[my0:icy + ir + 2, mx0:icx + ir + 2]
+    mask = np.zeros(region.shape, np.uint8)
+    cv2.circle(mask, (icx - mx0, icy - my0), ir, 255, -1)
+    inner = cv2.mean(region, mask=mask)[0]
     fill = float(np.clip(1 - inner / max(paper, 1.0), 0.0, 1.0))
     logger.debug("burbuja '%s' en (%.0f, %.0f) px: centro %.0f, papel %.0f -> fill %.2f",
                  bubble.value, cx, cy, inner, paper, fill)

@@ -48,7 +48,15 @@ logger = logging.getLogger(__name__)
 
 
 class AlignmentError(Exception):
-    """No se pudieron encontrar los 4 marcadores de esquina en la imagen."""
+    """No se pudieron encontrar los 4 marcadores de esquina en la imagen.
+
+    `found` tiene los que sí se encontraron ({esquina: (x, y)}), para que
+    el escaneo en vivo pueda dibujarlos y orientar al usuario.
+    """
+
+    def __init__(self, message: str, found: dict[str, tuple[float, float]] | None = None):
+        super().__init__(message)
+        self.found = found or {}
 
 
 @dataclass
@@ -110,7 +118,8 @@ def detect_corner_markers(image: np.ndarray) -> DetectedMarkers:
         raise AlignmentError(
             "Faltan marcadores de esquina: " + ", ".join(missing)
             + ". Revisa que se vean completos, sin reflejos ni sombras, y que "
-            "estén bien impresos (negro sólido)."
+            "estén bien impresos (negro sólido).",
+            found=centers,
         )
 
     logger.info("fin: los 4 marcadores de esquina encontrados")
