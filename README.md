@@ -148,6 +148,26 @@ nota con dos opciones: **[N] calificar otro** o **[Q] salir**.
 Además de la imagen de revisión se guarda el cuadro capturado. Para que la
 lectura sea buena con una webcam, la hoja debe ocupar casi todo el cuadro.
 
+### La web (recomendado)
+
+Todo lo anterior se puede hacer desde el navegador, sin terminal: crear
+cuenta, crear y editar exámenes (con botones por pregunta o pegando las
+respuestas, p. ej. `ABDCA`), descargar el PDF en carta o A4, calificar con
+la cámara o con fotos, y borrar exámenes.
+
+La primera vez hay que compilar la web (necesita Node.js:
+`sudo dnf install nodejs` en Fedora):
+
+```bash
+cd web && npm install && npm run build && cd ..
+python -m api.serve
+```
+
+Y se abre la dirección que imprime (ver abajo). Después de cambiar algo en
+`web/`, se vuelve a correr `npm run build`. Para trabajar en la web con
+recarga automática: `python -m api.serve` en una terminal y `npm run dev`
+en `web/` en otra (http://localhost:5173).
+
 ### 5c. O califica desde el celular (recomendado)
 
 La cámara del celular es mucho mejor que la de una laptop. Con el celular y
@@ -232,8 +252,11 @@ propios exámenes y resultados.
    ```
    En *Table Editor* aparecen `exams`, `sections`, `questions` y `results`,
    con RLS activado (cada usuario solo puede ver sus filas).
-4. **Crea los usuarios** en *Authentication → Users → Add user* (con
-   "Auto confirm"), o deja que se registren cuando haya registro en la web.
+4. **Usuarios:** cada profesor crea su cuenta en la web ("Crear cuenta").
+   En *Authentication → Sign In / Providers* deben estar activos **Allow
+   new users to sign up** y, para entrar sin confirmar el correo,
+   desactivado **Confirm email**. También se pueden crear en
+   *Authentication → Users → Add user*.
 5. **Arranca** `python -m api.serve`: la página pide iniciar sesión.
 
 Para que los comandos (`cli.exams`, `cli.grade`, …) guarden a nombre de
@@ -278,7 +301,8 @@ core/       el motor: layout de la hoja, PDF, marcadores, QR, lectura, nota,
             escaneo en vivo
 storage/    base de datos (SQLite por defecto)
 cli/        los comandos de arriba
-api/        API, inicio de sesión y página para calificar desde el celular
+api/        API (exámenes, PDF, calificar, inicio de sesión)
+web/        la web (React + Vite): cuenta, Mis exámenes, editor, calificar
 tests/      pruebas automáticas con hojas simuladas
 scripts/    utilidades (generar los diagramas)
 docs/       diagramas
@@ -291,6 +315,7 @@ el `.env` tiene `DATABASE_URL` (ver arriba).
 
 ```bash
 python -m pytest
+cd web && npm test      # lógica del editor de exámenes
 ```
 
 Generan hojas por código, las contestan con distintos tipos de marca

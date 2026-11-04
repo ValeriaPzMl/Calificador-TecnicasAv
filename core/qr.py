@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 from .alignment import DetectedMarkers, detect_corner_markers, warp_region
-from .layout import PAGE_SIZES_MM, QR_PREFIX, page_geometry
+from .layout import PAGE_SIZES_MM, QR_PREFIX, page_geometry, parse_qr_payload
 from .preprocessing import to_grayscale
 
 QR_PX_PER_MM = 8.0
@@ -45,7 +45,10 @@ def read_qr(image: np.ndarray, markers: DetectedMarkers | None = None) -> QrRead
     imprimió (el layout lo necesita), o None si no se pudo leer.
 
     Prueba cada tamaño de página conocido, porque la posición del QR en mm
-    depende de él. Lanza AlignmentError si no se encuentran los marcadores.
+    depende de él. Como el QR de una página a veces también se alcanza a
+    leer con la posición de otra, la página que dice el QR (si la dice)
+    gana sobre la posición con la que se leyó. Lanza AlignmentError si no
+    se encuentran los marcadores.
     """
     logger.info("inicio: leyendo el QR del examen")
     if markers is None:
@@ -66,8 +69,12 @@ def read_qr(image: np.ndarray, markers: DetectedMarkers | None = None) -> QrRead
             warp_region(image, markers, geo.marker_centers, region, QR_PX_PER_MM)
         )
         payload = _decode(crop)
-        if payload and payload.startswith(QR_PREFIX):
-            exam_id = payload[len(QR_PREFIX):]
+        parsed = parse_qr_payload(payload) if payload else None
+        if parsed:
+            exam_id, qr_page = parsed
+            if qr_page and qr_page != page:
+                logger.debug("leído con la posición de '%s', pero el QR dice '%s'", page, qr_page)
+            page = qr_page or page
             logger.info("fin: QR leído en página '%s', examen '%s'", page, exam_id)
             return QrReading(exam_id, page)
         if payload:

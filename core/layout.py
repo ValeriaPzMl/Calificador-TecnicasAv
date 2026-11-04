@@ -35,7 +35,12 @@ PAGE_MARGIN = 10.0  # distancia del borde de la hoja al marcador
 MARKER_SIZE = 16.0  # lado del marcador ArUco impreso, incluyendo su borde negro
 PX_PER_MM = 5.0  # resolución de la imagen alineada (~127 dpi)
 
-QR_PREFIX = "EG1:"  # el QR contiene QR_PREFIX + exam.id
+# El QR contiene QR_PREFIX + exam.id y, si la hoja no es carta, "|<página>"
+# (ej. "EG1:ingles01|a4"). Las hojas carta no llevan página: así siguen
+# sirviendo las que se imprimieron antes de agregarla.
+QR_PREFIX = "EG1:"
+QR_PAGE_SEP = "|"
+DEFAULT_PAGE = "letter"
 QR_SIZE = 24.0
 
 # Matrícula: una fila por dígito, 10 burbujas (0-9) por fila
@@ -211,6 +216,23 @@ def page_geometry(page: str = "letter") -> PageGeometry:
     return geo
 
 
+def qr_payload(exam_id: str, page: str) -> str:
+    """Lo que va dentro del QR de la hoja."""
+    return QR_PREFIX + exam_id + ("" if page == DEFAULT_PAGE else QR_PAGE_SEP + page)
+
+
+def parse_qr_payload(payload: str) -> tuple[str, str | None] | None:
+    """Contenido del QR -> (id del examen, página o None si no la dice).
+    None si no es un QR de nuestras hojas."""
+    if not payload.startswith(QR_PREFIX):
+        return None
+    exam_id, _, page = payload[len(QR_PREFIX):].partition(QR_PAGE_SEP)
+    if page and page not in PAGE_SIZES_MM:
+        logger.warning("QR con página desconocida %r; se ignora", page)
+        page = ""
+    return exam_id, page or None
+
+
 def build_layout(exam: Exam, page: str = "letter") -> SheetLayout:
     """Calcula el layout completo de la hoja para `exam`.
 
@@ -261,7 +283,7 @@ def build_layout(exam: Exam, page: str = "letter") -> SheetLayout:
 
     # --- Bloque superior derecho: QR (posición fija por página) ---
     qr_box = geo.qr_box
-    logger.info("bloque 3/4: QR con '%s' y datos del alumno", QR_PREFIX + exam.id)
+    logger.info("bloque 3/4: QR con '%s' y datos del alumno", qr_payload(exam.id, page))
 
     # --- Bloque central: datos del alumno e instrucciones ---
     info_x = sid_right + 8
@@ -358,7 +380,7 @@ def build_layout(exam: Exam, page: str = "letter") -> SheetLayout:
         marker_size=MARKER_SIZE,
         marker_centers=geo.marker_centers,
         qr_box=qr_box,
-        qr_payload=QR_PREFIX + exam.id,
+        qr_payload=qr_payload(exam.id, page),
         student_id=student_id,
         questions=questions,
         texts=texts,

@@ -15,10 +15,12 @@ formas de calificar:
   sube de la galería, y se califica con `grade_photo`, igual que `cli.grade`.
 
 Rutas:
-    GET    /                                 página de prueba
+    GET    /                                 la web (React, web/dist) o la página de prueba
+    GET    /prueba                           página de prueba (HTML + JS, sin React)
     GET    /api/config                       si hay que iniciar sesión y con qué proyecto
     GET    /api/me                           el usuario de la sesión
     GET    /api/exams                        exámenes del usuario
+    ...    /api/exams/{id}...                crear, editar, borrar, PDF (api/exams.py)
     POST   /api/scan/sessions                empezar un escaneo en vivo
     POST   /api/scan/sessions/{id}/frame     mandar un cuadro (multipart "frame")
     DELETE /api/scan/sessions/{id}           cancelar el escaneo
@@ -44,6 +46,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import sessionmaker
 
 from api.auth import Auth
+from api.exams import register_exam_routes
 from core.alignment import AlignmentError
 from core.layout import PAGE_SIZES_MM
 from core.live import READY, FrameStatus, LiveScanner
@@ -52,6 +55,7 @@ from storage import repository
 from storage.saving import save_graded
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"  # npm run build
 SESSION_TTL_S = 15 * 60  # un escaneo sin cuadros en este tiempo se descarta
 CORNER_ORDER = ["top_left", "top_right", "bottom_right", "bottom_left"]
 REVIEW_MAX_SIDE = 1600  # tamaño de la imagen de revisión que se manda al navegador
@@ -75,11 +79,13 @@ class _ScanSession:
         self.result: dict | None = None  # el resultado, una vez guardado
 
 
-def create_app(session_factory: sessionmaker, auth: Auth | None = None) -> FastAPI:
+def create_app(session_factory: sessionmaker, auth: Auth | None = None,
+               web_dist: Path | None = WEB_DIST) -> FastAPI:
     """Crea la app. `session_factory` abre sesiones de la BD (una por
     petición) y `auth` dice quién hace cada petición (sin él, modo local
     sin sesión); así las pruebas pueden pasar una BD en memoria y llaves
-    de prueba."""
+    de prueba. `web_dist` es la web compilada; si no existe, en `/` se
+    sirve la página de prueba."""
     auth = auth or Auth()
     app = FastAPI(title="Calificador")
     scans: dict[str, _ScanSession] = {}
@@ -92,8 +98,8 @@ def create_app(session_factory: sessionmaker, auth: Auth | None = None) -> FastA
                 return repository.get_exam(session, exam_id, owner_id=owner_id)
         return find_exam
 
-    @app.get("/", include_in_schema=False)
-    def index():
+    @app.get("/prueba", include_in_schema=False)
+    def test_page():
         return FileResponse(STATIC_DIR / "index.html")
 
     @app.get("/api/config")
@@ -109,8 +115,11 @@ def create_app(session_factory: sessionmaker, auth: Auth | None = None) -> FastA
         with session_factory() as session:
             exams = repository.list_exams(session, owner_id=owner_id)
         logger.info("%d exámenes", len(exams))
-        return [{"id": e.id, "title": e.title, "questions": e.questions, "results": e.results}
+        return [{"id": e.id, "title": e.title, "questions": e.questions, "results": e.results,
+                 "created_at": e.created_at.isoformat()}
                 for e in exams]
+
+    register_exam_routes(app, session_factory, auth)
 
     @app.post("/api/scan/sessions")
     def start_scan(options: ScanOptions, owner_id: uuid.UUID = Depends(auth)):
@@ -180,7 +189,30 @@ def create_app(session_factory: sessionmaker, auth: Auth | None = None) -> FastA
         logger.info("fin: foto calificada")
         return {"result": result}
 
+    register_web(app, web_dist)
     return app
+
+
+def register_web(app: FastAPI, web_dist: Path | None) -> None:
+    """Sirve la web de React. Va al final: cualquier ruta que no sea de la
+    API regresa el archivo pedido o `index.html` (las rutas de React, como
+    /examenes/nuevo, las resuelve el navegador)."""
+    index = web_dist / "index.html" if web_dist else None
+    if index is None or not index.exists():
+        logger.info("no hay web compilada (%s); en / va la página de prueba", web_dist)
+        app.get("/", include_in_schema=False)(lambda: FileResponse(STATIC_DIR / "index.html"))
+        return
+    logger.info("sirviendo la web desde %s", web_dist)
+    root = web_dist.resolve()
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def web(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(404, "Ruta de la API desconocida.")
+        file = (root / path).resolve()
+        if path and file.is_file() and file.is_relative_to(root):
+            return FileResponse(file)
+        return FileResponse(index)
 
 
 def _check_page(page: str) -> None:

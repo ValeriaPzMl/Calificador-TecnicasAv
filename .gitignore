@@ -12,3 +12,5 @@ data/certs/
 .env
 READMEMINE.md
 .pytest_cache
+web/node_modules/
+web/dist/

@@ -29,7 +29,7 @@ import uvicorn
 from sqlalchemy.orm import sessionmaker
 
 from api.auth import Auth
-from api.main import create_app
+from api.main import WEB_DIST, create_app
 from cli.logs import add_verbose_flag, setup_logging
 from storage.db import init_db, make_engine
 
@@ -139,6 +139,9 @@ def main() -> None:
     print_qr(url)
     if not args.http:
         print("\nSi sale \"la conexión no es privada\": Configuración avanzada → Continuar.")
+    if not (WEB_DIST / "index.html").exists():
+        print("\nAVISO: la web no está compilada; en / sale la página de prueba.")
+        print("       Compílala con: cd web && npm install && npm run build")
     print("Ctrl+C para detener.\n")
 
     # log_config=None: uvicorn usa la misma configuración de logs que el resto
