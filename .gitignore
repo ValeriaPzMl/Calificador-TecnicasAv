@@ -9,5 +9,6 @@ data/sheets/
 data/calificador.db
 data/results/
 data/certs/
+.env
 READMEMINE.md
 .pytest_cache

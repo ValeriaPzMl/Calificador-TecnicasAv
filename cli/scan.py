@@ -28,7 +28,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from cli.grade import print_result, save_graded
+from cli.grade import print_result
 from cli.logs import add_verbose_flag, setup_logging
 from core.layout import PAGE_SIZES_MM
 from core.live import (
@@ -36,6 +36,7 @@ from core.live import (
 )
 from storage import repository
 from storage.db import open_session
+from storage.saving import save_graded
 
 WINDOW = "Calificador"
 DISPLAY_W = 1280  # ancho máximo de la ventana

@@ -47,6 +47,10 @@ pip install -r requirements.txt
 Todos los comandos se corren desde la carpeta `Calificador/` con el `venv`
 activado.
 
+Así ya funciona todo en la computadora, con una base de datos local
+(SQLite). Para usar la base de datos en la nube con cuentas de usuario,
+ve [Usar Supabase](#usar-supabase-base-de-datos-en-la-nube-y-cuentas).
+
 ## Uso
 
 ### 1. Describe el examen
@@ -210,6 +214,45 @@ esperabas:
 python -m cli.grade data/raw/foto1.jpg --dry-run -vv
 ```
 
+## Usar Supabase (base de datos en la nube y cuentas)
+
+Con Supabase cada profesor inicia sesión con su correo y solo ve sus
+propios exámenes y resultados.
+
+1. **Crea el proyecto** en [supabase.com](https://supabase.com) → *New
+   project* (plan Free). Guarda la contraseña de la base de datos.
+2. **Copia `.env.example` a `.env`** y llénalo:
+   - `DATABASE_URL`: botón *Connect* → **Session pooler** → URI (con tu
+     contraseña).
+   - `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY`: *Project Settings → API
+     Keys*. Nunca pongas la llave `secret` / `service_role`.
+3. **Crea las tablas:**
+   ```bash
+   alembic upgrade head
+   ```
+   En *Table Editor* aparecen `exams`, `sections`, `questions` y `results`,
+   con RLS activado (cada usuario solo puede ver sus filas).
+4. **Crea los usuarios** en *Authentication → Users → Add user* (con
+   "Auto confirm"), o deja que se registren cuando haya registro en la web.
+5. **Arranca** `python -m api.serve`: la página pide iniciar sesión.
+
+Para que los comandos (`cli.exams`, `cli.grade`, …) guarden a nombre de
+alguien, pon en el `.env` `CALIFICADOR_OWNER_ID=<uuid del usuario>` (está
+en *Authentication → Users*).
+
+Para pasar lo que ya tenías en la base local a un usuario de Supabase:
+
+```bash
+python scripts/migrate_sqlite.py --owner admin@correo.com --dry-run   # ver qué copiaría
+python scripts/migrate_sqlite.py --owner admin@correo.com
+```
+
+Copia exámenes y resultados con los mismos ids (las hojas impresas siguen
+sirviendo), se salta lo que ya esté y no toca la base local.
+
+Los ids de examen son únicos entre **todos** los usuarios (van en el QR),
+así que dos profesores no pueden tener los dos un examen `ingles01`.
+
 ## Cómo funciona
 
 1. **Encuentra la hoja:** detecta los cuatro marcadores de las esquinas y
@@ -235,14 +278,14 @@ core/       el motor: layout de la hoja, PDF, marcadores, QR, lectura, nota,
             escaneo en vivo
 storage/    base de datos (SQLite por defecto)
 cli/        los comandos de arriba
-api/        API y página para calificar desde el navegador del celular
+api/        API, inicio de sesión y página para calificar desde el celular
 tests/      pruebas automáticas con hojas simuladas
 scripts/    utilidades (generar los diagramas)
 docs/       diagramas
 ```
 
-Los datos se guardan en `data/calificador.db` (SQLite). Para usar otra base
-de datos (p. ej. PostgreSQL), define `DATABASE_URL`.
+Los datos se guardan en `data/calificador.db` (SQLite), o en Supabase si
+el `.env` tiene `DATABASE_URL` (ver arriba).
 
 ## Pruebas
 
@@ -259,5 +302,6 @@ lectura, la nota y las reglas de la base de datos.
 
 Funciona por línea de comandos (con fotos o con la cámara en vivo) y desde
 el navegador del celular en la red local, y está probado con hojas
-simuladas y con fotos reales de celular. Está en desarrollo una versión web
-con inicio de sesión.
+simuladas y con fotos reales de celular. Con Supabase, cada profesor
+inicia sesión y tiene sus propios exámenes. Está en desarrollo la versión
+web completa (crear exámenes, ver resultados).

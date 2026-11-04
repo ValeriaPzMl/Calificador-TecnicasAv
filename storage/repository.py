@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from models.exam import Exam, Question, Section
 from models.result import Result, SheetReading
 
-from .db import LOCAL_OWNER_ID
+from .db import default_owner_id
 from .tables import ExamRow, QuestionRow, ResultRow, SectionRow
 
 logger = logging.getLogger(__name__)
@@ -65,12 +65,16 @@ class ExamSummary:
 
 
 # --- Exámenes ---
+# Las funciones que crean o listan usan `default_owner_id()` si no se pasa
+# owner_id (así funciona el CLI). Las que buscan un examen por id no
+# filtran por dueño si owner_id es None; la API siempre lo pasa.
 
-def create_exam(session: Session, exam: Exam, owner_id: uuid.UUID = LOCAL_OWNER_ID) -> None:
+def create_exam(session: Session, exam: Exam, owner_id: uuid.UUID | None = None) -> None:
+    owner_id = owner_id or default_owner_id()
     logger.info("inicio: guardando examen '%s' de %s", exam.id, owner_id)
     exam.validate()
     if session.get(ExamRow, exam.id) is not None:
-        raise ExamExistsError(f"Ya existe un examen con id '{exam.id}'")
+        raise ExamExistsError(f"Ya existe un examen con id '{exam.id}'; usa otro id")
     row = ExamRow(id=exam.id, owner_id=owner_id)
     _fill_exam_row(row, exam)
     session.add(row)
@@ -91,7 +95,8 @@ def get_exam(session: Session, exam_id: str, owner_id: uuid.UUID | None = None) 
     return exam
 
 
-def list_exams(session: Session, owner_id: uuid.UUID = LOCAL_OWNER_ID) -> list[ExamSummary]:
+def list_exams(session: Session, owner_id: uuid.UUID | None = None) -> list[ExamSummary]:
+    owner_id = owner_id or default_owner_id()
     logger.info("listando exámenes de %s", owner_id)
     rows = session.scalars(
         select(ExamRow).where(ExamRow.owner_id == owner_id).order_by(ExamRow.created_at)
@@ -174,12 +179,13 @@ def add_result(
     session: Session,
     result: Result,
     reading: SheetReading,
-    owner_id: uuid.UUID = LOCAL_OWNER_ID,
+    owner_id: uuid.UUID | None = None,
     image_path: str | None = None,
 ) -> tuple[ResultRow, list[ResultRow]]:
     """Guarda un resultado. Regresa (fila nueva, otros resultados de la
     misma matrícula). Si la lista no está vacía, ninguno queda `selected`
     hasta que el profesor elija con `choose_result`."""
+    owner_id = owner_id or default_owner_id()
     logger.info("inicio: guardando resultado de matrícula %s en examen '%s'",
                 result.student_id or result.student_id_raw, result.exam_id)
     if session.get(ExamRow, result.exam_id) is None:

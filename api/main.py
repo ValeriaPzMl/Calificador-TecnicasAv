@@ -1,9 +1,12 @@
 """
-API mínima para calificar desde el navegador (celular o computadora).
+API para calificar desde el navegador (celular o computadora).
 
-Es la base de la fase 4: todavía sin login ni Supabase, todo se guarda con
-el usuario local, en la misma BD que usa el CLI. Sirve también la página de
-prueba (`api/static/index.html`), que ofrece dos formas de calificar:
+Cada profesor inicia sesión (Supabase) y solo ve y califica con sus propios
+exámenes: todas las rutas reciben el usuario de `api.auth.Auth` y lo pasan
+como `owner_id` al repositorio. Sin Supabase configurado (modo local) no se
+pide sesión y todo es del usuario por defecto, como en el CLI. Sirve
+también la página de prueba (`api/static/index.html`), que ofrece dos
+formas de calificar:
 
 - **Cámara en vivo:** el navegador abre la cámara del dispositivo y manda
   cuadros uno por uno. La API mantiene un `LiveScanner` por sesión de
@@ -13,7 +16,9 @@ prueba (`api/static/index.html`), que ofrece dos formas de calificar:
 
 Rutas:
     GET    /                                 página de prueba
-    GET    /api/exams                        exámenes registrados
+    GET    /api/config                       si hay que iniciar sesión y con qué proyecto
+    GET    /api/me                           el usuario de la sesión
+    GET    /api/exams                        exámenes del usuario
     POST   /api/scan/sessions                empezar un escaneo en vivo
     POST   /api/scan/sessions/{id}/frame     mandar un cuadro (multipart "frame")
     DELETE /api/scan/sessions/{id}           cancelar el escaneo
@@ -33,17 +38,18 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import sessionmaker
 
-from cli.grade import save_graded
+from api.auth import Auth
 from core.alignment import AlignmentError
 from core.layout import PAGE_SIZES_MM
 from core.live import READY, FrameStatus, LiveScanner
 from core.pipeline import GradedSheet, GradingError, grade_photo
 from storage import repository
+from storage.saving import save_graded
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 SESSION_TTL_S = 15 * 60  # un escaneo sin cuadros en este tiempo se descarta
@@ -60,56 +66,80 @@ class ScanOptions(BaseModel):
 
 
 class _ScanSession:
-    def __init__(self, scanner: LiveScanner, options: ScanOptions):
+    def __init__(self, scanner: LiveScanner, options: ScanOptions, owner_id: uuid.UUID):
         self.scanner = scanner
         self.options = options
+        self.owner_id = owner_id
         self.lock = threading.Lock()  # un cuadro a la vez por escaneo
         self.last_used = time.monotonic()
         self.result: dict | None = None  # el resultado, una vez guardado
 
 
-def create_app(session_factory: sessionmaker) -> FastAPI:
+def create_app(session_factory: sessionmaker, auth: Auth | None = None) -> FastAPI:
     """Crea la app. `session_factory` abre sesiones de la BD (una por
-    petición), así las pruebas pueden pasar una BD en memoria."""
+    petición) y `auth` dice quién hace cada petición (sin él, modo local
+    sin sesión); así las pruebas pueden pasar una BD en memoria y llaves
+    de prueba."""
+    auth = auth or Auth()
     app = FastAPI(title="Calificador")
     scans: dict[str, _ScanSession] = {}
     scans_lock = threading.Lock()
 
-    def find_exam(exam_id: str):
-        with session_factory() as session:
-            return repository.get_exam(session, exam_id)
+    def exam_finder(owner_id: uuid.UUID):
+        """`find_exam` para el pipeline: solo encuentra exámenes del usuario."""
+        def find_exam(exam_id: str):
+            with session_factory() as session:
+                return repository.get_exam(session, exam_id, owner_id=owner_id)
+        return find_exam
 
     @app.get("/", include_in_schema=False)
     def index():
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/api/config")
+    def config():
+        return auth.public_config()
+
+    @app.get("/api/me")
+    def me(owner_id: uuid.UUID = Depends(auth)):
+        return {"user_id": str(owner_id), "auth": auth.enabled}
+
     @app.get("/api/exams")
-    def list_exams():
+    def list_exams(owner_id: uuid.UUID = Depends(auth)):
         with session_factory() as session:
-            exams = repository.list_exams(session)
+            exams = repository.list_exams(session, owner_id=owner_id)
         logger.info("%d exámenes", len(exams))
         return [{"id": e.id, "title": e.title, "questions": e.questions, "results": e.results}
                 for e in exams]
 
     @app.post("/api/scan/sessions")
-    def start_scan(options: ScanOptions):
+    def start_scan(options: ScanOptions, owner_id: uuid.UUID = Depends(auth)):
         _check_page(options.page)
         with scans_lock:
             _drop_stale(scans)
             scan_id = uuid.uuid4().hex
             scans[scan_id] = _ScanSession(
-                LiveScanner(find_exam, fallback_exam_id=options.exam_id or None,
+                LiveScanner(exam_finder(owner_id), fallback_exam_id=options.exam_id or None,
                             fallback_page=options.page),
                 options,
+                owner_id,
             )
-        logger.info("escaneo %s iniciado (%s); %d activos", scan_id, options, len(scans))
+        logger.info("escaneo %s iniciado por %s (%s); %d activos", scan_id, owner_id, options,
+                    len(scans))
         return {"scan_id": scan_id}
 
-    @app.post("/api/scan/sessions/{scan_id}/frame")
-    def scan_frame(scan_id: str, frame: UploadFile = File(...)):
+    def get_scan(scan_id: str, owner_id: uuid.UUID) -> _ScanSession:
         scan = scans.get(scan_id)
-        if scan is None:
+        if scan is None or scan.owner_id != owner_id:
+            if scan is not None:
+                logger.warning("escaneo %s es de otro usuario", scan_id)
             raise HTTPException(404, "El escaneo no existe o ya expiró; empieza otro.")
+        return scan
+
+    @app.post("/api/scan/sessions/{scan_id}/frame")
+    def scan_frame(scan_id: str, frame: UploadFile = File(...),
+                   owner_id: uuid.UUID = Depends(auth)):
+        scan = get_scan(scan_id, owner_id)
         image = _decode(frame.file.read())
         with scan.lock:
             scan.last_used = time.monotonic()
@@ -118,32 +148,35 @@ def create_app(session_factory: sessionmaker) -> FastAPI:
             if status.state == READY:
                 if scan.result is None:  # se guarda una sola vez
                     scan.result = _save(session_factory, status.graded, "vivo",
-                                        scan.options.dry_run, capture=status.capture)
+                                        scan.options.dry_run, owner_id,
+                                        capture=status.capture)
                 payload["result"] = scan.result
         return payload
 
     @app.delete("/api/scan/sessions/{scan_id}")
-    def stop_scan(scan_id: str):
+    def stop_scan(scan_id: str, owner_id: uuid.UUID = Depends(auth)):
         with scans_lock:
-            scan = scans.pop(scan_id, None)
+            scan = get_scan(scan_id, owner_id)
+            del scans[scan_id]
         logger.info("escaneo %s terminado (%s)", scan_id,
-                    "con resultado" if scan and scan.result else "sin resultado")
+                    "con resultado" if scan.result else "sin resultado")
         return {"ok": True}
 
     @app.post("/api/grade")
     def grade(photo: UploadFile = File(...), exam_id: str = Form(""), page: str = Form("letter"),
-              dry_run: bool = Form(False)):
-        logger.info("inicio: foto subida %s (exam_id=%r, dry_run=%s)",
-                    photo.filename, exam_id, dry_run)
+              dry_run: bool = Form(False), owner_id: uuid.UUID = Depends(auth)):
+        logger.info("inicio: foto subida %s por %s (exam_id=%r, dry_run=%s)",
+                    photo.filename, owner_id, exam_id, dry_run)
         _check_page(page)
         image = _decode(photo.file.read())
         try:
-            graded = grade_photo(image, find_exam=find_exam,
+            graded = grade_photo(image, find_exam=exam_finder(owner_id),
                                  fallback_exam_id=exam_id or None, fallback_page=page)
         except (AlignmentError, GradingError) as exc:
             logger.warning("no se pudo calificar la foto: %s", exc)
             raise HTTPException(422, str(exc)) from exc
-        result = _save(session_factory, graded, Path(photo.filename or "foto").stem, dry_run)
+        result = _save(session_factory, graded, Path(photo.filename or "foto").stem, dry_run,
+                       owner_id)
         logger.info("fin: foto calificada")
         return {"result": result}
 
@@ -189,12 +222,13 @@ def _status_payload(status: FrameStatus, image: np.ndarray) -> dict:
 
 
 def _save(session_factory: sessionmaker, graded: GradedSheet, stem: str, dry_run: bool,
-          capture: np.ndarray | None = None) -> dict:
-    """Guarda la hoja (BD + imagen de revisión, como el CLI) y arma la
-    respuesta con la nota."""
+          owner_id: uuid.UUID, capture: np.ndarray | None = None) -> dict:
+    """Guarda la hoja (BD + imagen de revisión, como el CLI) a nombre del
+    usuario y arma la respuesta con la nota."""
     stem = f"{stem}_{datetime.now():%Y%m%d_%H%M%S}"
     with session_factory() as session:
-        result_id, image_path, others = save_graded(session, graded, stem, dry_run)
+        result_id, image_path, others = save_graded(session, graded, stem, dry_run,
+                                                    owner_id=owner_id)
     if capture is not None:
         name = f"{stem}_captura.jpg" if dry_run else f"{result_id}_captura.jpg"
         cv2.imwrite(str(Path(image_path).with_name(name)), capture)

@@ -28,6 +28,7 @@ import cv2
 import uvicorn
 from sqlalchemy.orm import sessionmaker
 
+from api.auth import Auth
 from api.main import create_app
 from cli.logs import add_verbose_flag, setup_logging
 from storage.db import init_db, make_engine
@@ -125,7 +126,7 @@ def main() -> None:
 
     engine = make_engine()
     init_db(engine)
-    app = create_app(sessionmaker(engine))
+    app = create_app(sessionmaker(engine), Auth.from_env())
 
     ip = lan_ip()
     ssl = {}

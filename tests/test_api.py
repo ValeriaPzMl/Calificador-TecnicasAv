@@ -1,17 +1,25 @@
 """
 API (la que usa la página del celular) con BD en memoria: calificar una
-foto subida y un escaneo en vivo cuadro por cuadro.
+foto subida, un escaneo en vivo cuadro por cuadro y, con sesión de
+Supabase, que cada usuario solo vea y use lo suyo. Los tokens se firman
+aquí con una llave de prueba, sin conectarse a Supabase.
 """
 
+import time
+import uuid
+
 import cv2
+import jwt
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from cryptography.hazmat.primitives.asymmetric import ec
 from sqlalchemy.pool import StaticPool
 
-import cli.grade
+import storage.saving
+from api.auth import Auth
 from api.main import create_app
 from core import live
 from storage import repository
@@ -40,7 +48,7 @@ def db():
 
 @pytest.fixture
 def client(db, tmp_path, monkeypatch):
-    monkeypatch.setattr(cli.grade, "RESULTS_IMG_DIR", tmp_path)
+    monkeypatch.setattr(storage.saving, "RESULTS_IMG_DIR", tmp_path)
     return TestClient(create_app(db))
 
 
@@ -115,3 +123,115 @@ def test_live_scan_without_sheet_keeps_searching(client):
     status = client.post(f"/api/scan/sessions/{scan_id}/frame",
                          files={"frame": ("f.jpg", frame, "image/jpeg")}).json()
     assert status["state"] == live.SEARCHING and "result" not in status
+
+
+# --- Con sesión (Supabase) ---
+
+SUPABASE_URL = "https://prueba.supabase.co"
+KEY = ec.generate_private_key(ec.SECP256R1())
+USER_A, USER_B = uuid.uuid4(), uuid.uuid4()
+
+
+def token(user: uuid.UUID, key=KEY, expires_in: int = 3600, aud: str = "authenticated") -> str:
+    now = int(time.time())
+    claims = {"sub": str(user), "aud": aud, "iss": f"{SUPABASE_URL}/auth/v1",
+              "iat": now, "exp": now + expires_in, "email": f"{user.hex[:6]}@prueba.com"}
+    return jwt.encode(claims, key, algorithm="ES256")
+
+
+def as_user(user: uuid.UUID, **kw) -> dict:
+    return {"Authorization": f"Bearer {token(user, **kw)}"}
+
+
+@pytest.fixture
+def auth_client(tmp_path, monkeypatch):
+    """El examen es del usuario A."""
+    engine = create_engine("sqlite://", poolclass=StaticPool,
+                           connect_args={"check_same_thread": False})
+    init_db(engine)
+    factory = sessionmaker(engine)
+    with factory() as s:
+        repository.create_exam(s, EXAM, owner_id=USER_A)
+    monkeypatch.setattr(storage.saving, "RESULTS_IMG_DIR", tmp_path)
+    auth = Auth(SUPABASE_URL, "sb_publishable_prueba", signing_key=KEY.public_key())
+    return TestClient(create_app(factory, auth)), factory
+
+
+def test_config_says_login_is_needed(auth_client):
+    client, _ = auth_client
+    assert client.get("/api/config").json() == {
+        "auth": True, "supabase_url": SUPABASE_URL, "publishable_key": "sb_publishable_prueba"}
+    assert client.get("/").status_code == 200  # la página no pide sesión
+
+
+def test_local_mode_needs_no_login(client):
+    assert client.get("/api/config").json() == {"auth": False}
+
+
+@pytest.mark.parametrize("headers", [
+    {},
+    {"Authorization": "Bearer basura"},
+    as_user(USER_A, expires_in=-60),  # vencido
+    as_user(USER_A, key=ec.generate_private_key(ec.SECP256R1())),  # otro proyecto
+    as_user(USER_A, aud="anon"),  # sin sesión iniciada
+])
+def test_invalid_session_is_rejected(auth_client, headers):
+    client, _ = auth_client
+    assert client.get("/api/exams", headers=headers).status_code == 401
+
+
+def test_each_user_sees_only_their_exams(auth_client):
+    client, _ = auth_client
+    assert client.get("/api/me", headers=as_user(USER_A)).json()["user_id"] == str(USER_A)
+    assert [e["id"] for e in client.get("/api/exams", headers=as_user(USER_A)).json()] == [EXAM.id]
+    assert client.get("/api/exams", headers=as_user(USER_B)).json() == []
+
+
+def test_result_is_saved_for_the_user(auth_client):
+    client, factory = auth_client
+    photo = jpg(simulate_photo(SHEET, seed=2))
+    resp = client.post("/api/grade", files={"photo": ("foto.jpg", photo, "image/jpeg")},
+                       headers=as_user(USER_A))
+    assert resp.status_code == 200
+    with factory() as s:
+        row = repository.get_result(s, uuid.UUID(resp.json()["result"]["result_id"]))
+        assert row.owner_id == USER_A
+
+
+def test_other_user_cannot_grade_with_my_exam(auth_client):
+    """B tiene la hoja impresa del examen de A: para B ese examen no existe."""
+    client, factory = auth_client
+    photo = jpg(simulate_photo(SHEET, seed=2))
+    resp = client.post("/api/grade", files={"photo": ("foto.jpg", photo, "image/jpeg")},
+                       headers=as_user(USER_B))
+    assert resp.status_code == 422 and "no está registrado" in resp.json()["detail"]
+    with factory() as s:
+        assert repository.count_results(s, EXAM.id) == 0
+
+
+def test_other_user_cannot_use_my_scan(auth_client):
+    client, _ = auth_client
+    scan_id = client.post("/api/scan/sessions", json={}, headers=as_user(USER_A)).json()["scan_id"]
+    frame = jpg(simulate_photo(SHEET, seed=0))
+    url = f"/api/scan/sessions/{scan_id}/frame"
+    files = {"frame": ("f.jpg", frame, "image/jpeg")}
+    assert client.post(url, files=files, headers=as_user(USER_B)).status_code == 404
+    assert client.delete(f"/api/scan/sessions/{scan_id}", headers=as_user(USER_B)).status_code == 404
+    assert client.post(url, files=files, headers=as_user(USER_A)).json()["state"] == live.READING
+
+
+def test_legacy_hs256_secret(tmp_path, monkeypatch):
+    """Proyectos de Supabase con la llave "legacy": firman con un secreto."""
+    secret = "secreto-de-prueba-de-al-menos-32-bytes"
+    engine = create_engine("sqlite://", poolclass=StaticPool,
+                           connect_args={"check_same_thread": False})
+    init_db(engine)
+    client = TestClient(create_app(sessionmaker(engine),
+                                   Auth(SUPABASE_URL, jwt_secret=secret)))
+    now = int(time.time())
+    good = jwt.encode({"sub": str(USER_A), "aud": "authenticated", "iss": f"{SUPABASE_URL}/auth/v1",
+                       "exp": now + 600}, secret, algorithm="HS256")
+    bad = jwt.encode({"sub": str(USER_A), "aud": "authenticated", "iss": f"{SUPABASE_URL}/auth/v1",
+                      "exp": now + 600}, "otro-secreto-de-al-menos-32-bytes-xx", algorithm="HS256")
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {good}"}).status_code == 200
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {bad}"}).status_code == 401

@@ -6,7 +6,9 @@
 <title>Calificador</title>
 <!--
   Página de prueba para calificar desde el celular (o la compu). La sirve
-  api/main.py. Dos modos:
+  api/main.py. Si el servidor tiene Supabase (/api/config), primero pide
+  iniciar sesión con correo y contraseña (supabase-js) y manda el token en
+  cada petición (apiFetch); cada profesor solo ve sus exámenes. Dos modos:
     - Cámara en vivo: getUserMedia → un cuadro a la vez a /api/scan/sessions/{id}/frame
     - Foto: cámara nativa (capture) o galería → /api/grade
   La configuración de la cámara está en CAMERA_CONFIG, abajo. Cuando exista
@@ -33,6 +35,10 @@
   button.secondary, .btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
   button:disabled { opacity: .45; cursor: default; }
   label { display: block; color: var(--muted); font-size: .9rem; margin-top: 10px; }
+  input[type=email], input[type=password] { width: 100%; padding: 12px; margin-top: 4px; border-radius: 8px;
+           border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 1rem; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .topbar button { width: auto; margin: 0; padding: 8px 12px; font-size: .9rem; }
   select { width: 100%; padding: 10px; margin-top: 4px; border-radius: 8px; border: 1px solid var(--line);
            background: var(--card); color: var(--text); font-size: 1rem; }
   .check { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: 1rem; }
@@ -67,9 +73,33 @@
 </head>
 <body>
 <main>
-  <!-- Inicio -->
-  <section id="home">
+  <!-- Cargando -->
+  <section id="boot">
+    <div class="card" style="text-align:center"><div class="spinner"></div></div>
+  </section>
+
+  <!-- Iniciar sesión (solo con Supabase) -->
+  <section id="login" class="hidden">
     <h1>Calificador</h1>
+    <form id="login-form" class="card">
+      <label for="login-email">Correo</label>
+      <input id="login-email" type="email" autocomplete="username" required>
+      <label for="login-pass">Contraseña</label>
+      <input id="login-pass" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="warn"></p>
+      <button id="btn-login" type="submit">Iniciar sesión</button>
+    </form>
+  </section>
+
+  <!-- Inicio -->
+  <section id="home" class="hidden">
+    <div class="topbar">
+      <h1>Calificador</h1>
+      <span id="user-box" class="hidden">
+        <span id="user-email" class="note"></span>
+        <button id="btn-logout" class="secondary">Cerrar sesión</button>
+      </span>
+    </div>
     <div class="card">
       <button id="btn-live">Calificar con la cámara en vivo</button>
       <p id="live-unavailable" class="note warn hidden">
@@ -160,7 +190,7 @@ const STATE_COLORS = {
 };
 
 const $ = (id) => document.getElementById(id);
-const screens = ["home", "busy", "error", "result", "live"];
+const screens = ["boot", "login", "home", "busy", "error", "result", "live"];
 function show(name) { for (const s of screens) $(s).classList.toggle("hidden", s !== name); }
 
 function options() {
@@ -169,12 +199,93 @@ function options() {
 
 let lastMode = null;  // "live" | "camera" | "gallery": para "Calificar otro"
 
+// ---------- Sesión ----------
+const SUPABASE_JS = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js";
+let sb = null;  // cliente de Supabase; null = modo local, sin sesión
+
+class SessionExpired extends Error {}
+
+// fetch a nuestra API con el token de la sesión. Si el servidor dice 401,
+// vuelve a la pantalla de inicio de sesión.
+async function apiFetch(url, opts = {}) {
+  const headers = new Headers(opts.headers || {});
+  if (sb) {
+    const { data } = await sb.auth.getSession();  // supabase-js lo renueva solo
+    if (data.session) headers.set("Authorization", `Bearer ${data.session.access_token}`);
+  }
+  const resp = await fetch(url, { ...opts, headers });
+  if (resp.status === 401 && sb) {
+    endScan();
+    await sb.auth.signOut().catch(() => {});
+    showLogin("Tu sesión venció; vuelve a iniciar sesión.");
+    throw new SessionExpired();
+  }
+  return resp;
+}
+
+function loadScript(src) {
+  return new Promise((ok, fail) => {
+    const el = document.createElement("script");
+    el.src = src; el.onload = ok; el.onerror = () => fail(new Error(`no se pudo cargar ${src}`));
+    document.head.append(el);
+  });
+}
+
+function showLogin(msg = "") {
+  $("login-error").textContent = msg;
+  $("btn-login").disabled = false;
+  show("login");
+}
+
+async function enterHome(email) {
+  $("user-box").classList.toggle("hidden", !email);
+  $("user-email").textContent = email || "";
+  show("home");
+  await loadExams();
+}
+
+async function boot() {
+  let config = { auth: false };
+  try { config = await (await fetch("/api/config")).json(); }
+  catch (err) { return showError("No hay conexión con el servidor."); }
+  if (!config.auth) return enterHome(null);
+
+  try { await loadScript(SUPABASE_JS); }
+  catch (err) { return showError("No se pudo cargar el inicio de sesión (¿hay internet?)."); }
+  sb = supabase.createClient(config.supabase_url, config.publishable_key);
+  const { data } = await sb.auth.getSession();
+  if (data.session) enterHome(data.session.user.email);
+  else showLogin();
+}
+
+$("login-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  $("btn-login").disabled = true;
+  $("login-error").textContent = "";
+  const { data, error } = await sb.auth.signInWithPassword({
+    email: $("login-email").value.trim(), password: $("login-pass").value,
+  });
+  if (error) {
+    console.warn("inicio de sesión:", error);
+    return showLogin(error.status === 400 ? "Correo o contraseña incorrectos." : error.message);
+  }
+  $("login-pass").value = "";
+  enterHome(data.user.email);
+};
+
+$("btn-logout").onclick = async () => {
+  await sb.auth.signOut();
+  showLogin();
+};
+
 // ---------- Inicio ----------
 async function loadExams() {
+  const sel = $("opt-exam");
+  while (sel.options.length > 1) sel.remove(1);  // otro usuario: otros exámenes
   try {
-    const exams = await (await fetch("/api/exams")).json();
-    for (const e of exams) $("opt-exam").add(new Option(`${e.title} (${e.id})`, e.id));
-  } catch (err) { console.warn("no se pudieron cargar los exámenes", err); }
+    const exams = await (await apiFetch("/api/exams")).json();
+    for (const e of exams) sel.add(new Option(`${e.title} (${e.id})`, e.id));
+  } catch (err) { if (!(err instanceof SessionExpired)) console.warn("no se pudieron cargar los exámenes", err); }
 }
 
 if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -205,11 +316,11 @@ async function gradePhoto(file) {
   form.append("page", o.page);
   form.append("dry_run", o.dry_run);
   try {
-    const resp = await fetch("/api/grade", { method: "POST", body: form });
+    const resp = await apiFetch("/api/grade", { method: "POST", body: form });
     const data = await resp.json();
     if (!resp.ok) return showError(data.detail || `Error ${resp.status}`);
     showResult(data.result);
-  } catch (err) { showError("No hay conexión con el servidor."); }
+  } catch (err) { if (!(err instanceof SessionExpired)) showError("No hay conexión con el servidor."); }
 }
 
 function showError(msg) { $("error-msg").textContent = msg; show("error"); }
@@ -258,10 +369,16 @@ async function startLive(deviceId) {
   fillCameraSelect(live.stream.getVideoTracks()[0].getSettings().deviceId);
   try { live.wakeLock = await navigator.wakeLock?.request("screen"); } catch (_) {}
 
-  const resp = await fetch("/api/scan/sessions", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(options()),
-  });
-  live.scanId = (await resp.json()).scan_id;
+  try {
+    const resp = await apiFetch("/api/scan/sessions", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(options()),
+    });
+    live.scanId = (await resp.json()).scan_id;
+  } catch (err) {
+    stopCamera();
+    if (!(err instanceof SessionExpired)) showError("No hay conexión con el servidor.");
+    return;
+  }
   live.running = true;
   live.status = null;
   requestAnimationFrame(render);
@@ -276,10 +393,11 @@ function stopCamera() {
   live.wakeLock = null;
 }
 
-async function endScan() {
+function endScan() {
   stopCamera();
-  if (live.scanId) fetch(`/api/scan/sessions/${live.scanId}`, { method: "DELETE" }).catch(() => {});
+  const scanId = live.scanId;
   live.scanId = null;
+  if (scanId) apiFetch(`/api/scan/sessions/${scanId}`, { method: "DELETE" }).catch(() => {});
 }
 
 $("btn-live-cancel").onclick = async () => { await endScan(); show("home"); };
@@ -300,11 +418,12 @@ async function sendLoop() {
     form.append("frame", blob, "frame.jpg");
     let status;
     try {
-      const resp = await fetch(`/api/scan/sessions/${scanId}/frame`, { method: "POST", body: form });
+      const resp = await apiFetch(`/api/scan/sessions/${scanId}/frame`, { method: "POST", body: form });
       status = await resp.json();
-      if (!resp.ok) { await endScan(); return showError(status.detail || `Error ${resp.status}`); }
+      if (!resp.ok) { endScan(); return showError(status.detail || `Error ${resp.status}`); }
     } catch (err) {
-      await endScan();
+      if (err instanceof SessionExpired) return;
+      endScan();
       return showError("Se perdió la conexión con el servidor.");
     }
     if (!live.running) return;
@@ -380,7 +499,7 @@ function showResult(r) {
   window.scrollTo(0, 0);
 }
 
-loadExams();
+boot();
 </script>
 </body>
 </html>

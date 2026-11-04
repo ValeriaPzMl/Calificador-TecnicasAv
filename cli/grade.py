@@ -19,18 +19,15 @@ import argparse
 import logging
 from pathlib import Path
 
-import cv2
-
 from cli.logs import add_verbose_flag, setup_logging
 from core.alignment import AlignmentError
-from core.detection import draw_reading
 from core.layout import PAGE_SIZES_MM
 from core.pipeline import GradedSheet, GradingError, grade_photo
 from core.preprocessing import load_image
 from storage import repository
 from storage.db import open_session
+from storage.saving import save_graded
 
-RESULTS_IMG_DIR = Path(__file__).resolve().parent.parent / "data" / "processed" / "results"
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 logger = logging.getLogger(__name__)
@@ -67,34 +64,6 @@ def grade_one(session, path: Path, args) -> bool:
     result_id, image_path, others = save_graded(session, graded, path.stem, args.dry_run)
     print_result(path.name, graded, result_id, image_path, others)
     return True
-
-
-def save_graded(session, graded: GradedSheet, stem: str,
-                dry_run: bool) -> tuple[str, Path, list]:
-    """Guarda una hoja calificada: imagen de revisión y, si no es
-    `dry_run`, el resultado en la BD. Lo usan este comando y `cli.scan`.
-
-    Devuelve (id del resultado, ruta de la imagen, otros resultados de la
-    misma matrícula).
-    """
-    logger.info("inicio: guardando hoja de '%s' (dry_run=%s)", graded.exam.id, dry_run)
-    correct = {q.number: q.correct_answer for s in graded.exam.sections for q in s.questions}
-    review = draw_reading(graded.aligned, graded.layout, graded.reading, correct)
-
-    out_dir = RESULTS_IMG_DIR / graded.exam.id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if dry_run:
-        image_path = out_dir / f"{stem}_revision.png"
-        cv2.imwrite(str(image_path), review)
-        logger.info("fin: solo imagen de revisión (%s)", image_path)
-        return "(no guardado)", image_path, []
-
-    row, others = repository.add_result(session, graded.result, graded.reading)
-    image_path = out_dir / f"{row.id}.png"
-    cv2.imwrite(str(image_path), review)
-    repository.set_image_path(session, row.id, str(image_path))
-    logger.info("fin: resultado %s guardado, imagen en %s", row.id, image_path)
-    return str(row.id), image_path, others
 
 
 def print_result(name: str, graded: GradedSheet, result_id: str, image_path: Path,
