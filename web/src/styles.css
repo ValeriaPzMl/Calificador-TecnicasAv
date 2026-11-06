@@ -106,3 +106,37 @@ ul.sections { padding-left: 18px; margin: 6px 0; }
 @media (max-width: 480px) {
   .grid-2 { grid-template-columns: 1fr; }
 }
+
+/* Resultados */
+.back { display: inline-block; margin-bottom: 8px; text-decoration: none; font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.stat-value { font-size: 1.4rem; font-weight: 800; }
+.chip { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .8rem; font-weight: 700;
+        white-space: nowrap; background: var(--accent-soft); color: var(--accent); }
+.chip-review, .chip-pending { background: color-mix(in srgb, var(--orange) 18%, var(--card)); color: var(--orange); }
+.chip-discarded { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.result-row { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; padding: 12px 14px; }
+.result-row .grow { flex: 1; min-width: 0; }
+.sid-line { font: 700 1.1rem ui-monospace, monospace; letter-spacing: .05em; }
+.sid-line.bad { color: var(--red); }
+.result-score { flex: none; font-weight: 800; font-size: 1.15rem; white-space: nowrap; }
+.dup-group + .dup-group { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 6px; }
+.dup-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-top: 6px; }
+.dup-option { text-align: center; }
+.dup-option button { width: 100%; margin-top: 6px; }
+.thumb { width: 100%; aspect-ratio: 8.5 / 11; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.img-loading { background: var(--line); aspect-ratio: 8.5 / 11; border-radius: 8px; }
+.opt.key { box-shadow: 0 0 0 2px var(--green); }
+.q-wrong .opt.on { background: var(--red); border-color: var(--red); }
+.q-ambiguous { background: color-mix(in srgb, var(--orange) 14%, transparent); border-radius: 8px; }
+.q-ambiguous .num { color: var(--orange); font-weight: 700; }
+.opt.blank-opt { color: var(--muted); }
+.opt.blank-opt.on { background: var(--muted); border-color: var(--muted); color: var(--card); }
+.bad-input { border-color: var(--red); }
+.chip-btn { min-width: 2.6em; }
+.banner button { margin: 8px 0 0; display: block; }
+.result-meta { margin-top: 4px; }
+.result-meta .chip { margin-right: 6px; }
+
+/* Login */
+button.link-btn { background: transparent; color: var(--accent); padding: 8px; margin: 4px 0 0; font-weight: 600; font-size: .95rem; }

@@ -165,3 +165,89 @@ def test_export_one_row_per_student(session):
     repository.choose_result(session, chosen.id)
     df = results_dataframe(session, EXAM.id).set_index("matricula")
     assert df.loc["222222", "nota"] == chosen.final_score
+
+
+# --- Corrección a mano ---
+
+def save_ambiguous(session, student_id="204517", ambiguous=(1, 2)):
+    """Hoja con todo bien salvo `ambiguous`, que el lector no pudo decidir."""
+    reading = SheetReading(
+        exam_id=EXAM.id, student_id=student_id, student_id_raw=student_id or "20?517",
+        answers={n: (None if n in ambiguous else a) for n, a in CORRECT.items()},
+        ambiguous=list(ambiguous),
+    )
+    return repository.add_result(session, score(EXAM, reading), reading)[0]
+
+
+def test_correct_ambiguous_questions(session):
+    repository.create_exam(session, EXAM)
+    row = save_ambiguous(session)
+    assert row.needs_review and row.final_score < 100
+
+    repository.correct_result(session, row, EXAM, {1: CORRECT[1]})
+    assert row.ambiguous == [2] and row.needs_review
+    repository.correct_result(session, row, EXAM, {2: None})  # en blanco
+    assert row.ambiguous == [] and row.blank == [2] and not row.needs_review
+    assert row.answers["1"] == CORRECT[1] and row.answers["2"] is None
+    assert row.final_score == score(EXAM, repository.row_to_reading(row)).final_score < 100
+
+
+def test_correction_survives_answer_key_change(session):
+    repository.create_exam(session, EXAM)
+    row = save_ambiguous(session, ambiguous=(1,))
+    repository.correct_result(session, row, EXAM, {1: CORRECT[1]})
+    assert row.final_score == 100
+
+    changed = copy.deepcopy(EXAM)
+    changed.sections[0].questions[1].correct_answer = "A" if CORRECT[2] != "A" else "B"
+    repository.update_exam(session, changed)
+    row = repository.get_result(session, row.id)
+    assert row.answers["1"] == CORRECT[1]  # la corrección sigue ahí
+    assert 0 < row.final_score < 100  # solo bajó por la pregunta 2
+
+
+def test_correct_student_id(session):
+    repository.create_exam(session, EXAM)
+    unreadable = save_ambiguous(session, student_id=None, ambiguous=())
+    assert unreadable.needs_review
+    repository.correct_result(session, unreadable, EXAM, student_id="204517")
+    assert unreadable.student_id == unreadable.student_id_raw == "204517"
+    assert unreadable.selected and not unreadable.needs_review
+
+    # Si la matrícula ya existe, quedan las dos por elegir
+    other = save_ambiguous(session, student_id="111111", ambiguous=())
+    repository.correct_result(session, other, EXAM, student_id="204517")
+    assert not other.selected and not unreadable.selected
+    assert list(repository.pending_duplicates(session, EXAM.id)) == ["204517"]
+
+
+@pytest.mark.parametrize("answers, student_id, text", [
+    ({999: "A"}, None, "no tiene la pregunta 999"),
+    ({1: "E"}, None, "no es una opción"),
+    ({}, "12345", "6 dígitos"),
+    ({}, "12345a", "6 dígitos"),
+])
+def test_invalid_correction(session, answers, student_id, text):
+    repository.create_exam(session, EXAM)
+    row = save_ambiguous(session)
+    with pytest.raises(repository.ResultValidationError, match=text):
+        repository.correct_result(session, row, EXAM, answers, student_id)
+
+
+def test_moving_out_of_duplicate_selects_the_other(session):
+    repository.create_exam(session, EXAM)
+    a, _ = save_scan(session, "204517")
+    b, _ = save_scan(session, "204517", answers={})
+    assert not a.selected and not b.selected
+    repository.correct_result(session, b, EXAM, student_id="999999")  # era otro alumno
+    assert a.selected and b.selected
+    assert repository.pending_duplicates(session, EXAM.id) == {}
+
+
+def test_delete_duplicate_selects_the_one_left(session):
+    repository.create_exam(session, EXAM)
+    a, _ = save_scan(session, "204517")
+    b, _ = save_scan(session, "204517")
+    repository.delete_result(session, b)
+    assert [r.id for r in repository.list_results(session, EXAM.id)] == [a.id]
+    assert a.selected

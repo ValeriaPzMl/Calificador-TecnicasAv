@@ -10,7 +10,7 @@ resultados.
     GET    /api/exams/{id}                   examen completo (+ resultados, si está bloqueado)
     POST   /api/exams                        crear (el id se genera solo)
     PUT    /api/exams/{id}                   editar (recalifica lo guardado)
-    DELETE /api/exams/{id}                   borrar con sus resultados
+    DELETE /api/exams/{id}                   borrar con sus resultados (y sus imágenes)
     GET    /api/exams/{id}/sheet.pdf         hoja para imprimir (?page=letter|a4)
     POST   /api/exams/preview                PNG de la hoja de un borrador, sin guardar
                                              (?page=, ?exam_id= al editar)
@@ -33,6 +33,7 @@ from core.layout import PAGE_SIZES_MM, LayoutError, build_layout
 from core.sheet_pdf import render
 from models.exam import Exam, ExamValidationError, _new_exam_id
 from storage import repository
+from storage.saving import delete_exam_saved
 
 PREVIEW_DPI = 110  # vista previa: suficiente para verla en pantalla
 
@@ -63,7 +64,8 @@ class ExamIn(BaseModel):
         return Exam.from_dict({**self.model_dump(), "id": exam_id})
 
 
-def register_exam_routes(app: FastAPI, session_factory: sessionmaker, auth: Auth) -> None:
+def register_exam_routes(app: FastAPI, session_factory: sessionmaker, auth: Auth,
+                         images) -> None:
 
     def owned_exam(session, exam_id: str, owner_id: uuid.UUID) -> Exam:
         exam = repository.get_exam(session, exam_id, owner_id=owner_id)
@@ -122,7 +124,7 @@ def register_exam_routes(app: FastAPI, session_factory: sessionmaker, auth: Auth
         logger.info("inicio: borrar examen '%s' de %s", exam_id, owner_id)
         with session_factory() as session:
             owned_exam(session, exam_id, owner_id)
-            deleted = repository.delete_exam(session, exam_id, owner_id=owner_id)
+            deleted = delete_exam_saved(session, exam_id, owner_id=owner_id, images=images)
         logger.info("fin: examen '%s' borrado con %d resultados", exam_id, deleted)
         return {"id": exam_id, "deleted_results": deleted}
 

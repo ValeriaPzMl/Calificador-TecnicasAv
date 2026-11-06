@@ -14,7 +14,8 @@ Uso (desde Calificador/, con DATABASE_URL de Supabase en .env):
 - Lo que ya exista en Supabase se salta: se puede correr otra vez sin
   duplicar.
 - No borra ni cambia la BD local.
-- Las imágenes de revisión siguen en disco (`image_path` se copia igual).
+- Las imágenes de revisión siguen en disco (`image_path` se copia igual);
+  súbelas después con `python scripts/upload_images.py`.
 """
 
 import argparse

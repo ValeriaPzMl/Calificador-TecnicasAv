@@ -5,8 +5,7 @@ Cada profesor inicia sesión (Supabase) y solo ve y califica con sus propios
 exámenes: todas las rutas reciben el usuario de `api.auth.Auth` y lo pasan
 como `owner_id` al repositorio. Sin Supabase configurado (modo local) no se
 pide sesión y todo es del usuario por defecto, como en el CLI. Sirve
-también la página de prueba (`api/static/index.html`), que ofrece dos
-formas de calificar:
+también la web (`web/dist`, React), que ofrece dos formas de calificar:
 
 - **Cámara en vivo:** el navegador abre la cámara del dispositivo y manda
   cuadros uno por uno. La API mantiene un `LiveScanner` por sesión de
@@ -15,12 +14,12 @@ formas de calificar:
   sube de la galería, y se califica con `grade_photo`, igual que `cli.grade`.
 
 Rutas:
-    GET    /                                 la web (React, web/dist) o la página de prueba
-    GET    /prueba                           página de prueba (HTML + JS, sin React)
+    GET    /                                 la web (React, web/dist)
     GET    /api/config                       si hay que iniciar sesión y con qué proyecto
     GET    /api/me                           el usuario de la sesión
     GET    /api/exams                        exámenes del usuario
     ...    /api/exams/{id}...                crear, editar, borrar, PDF (api/exams.py)
+    ...    /api/.../results...               ver, corregir, elegir, exportar (api/results.py)
     POST   /api/scan/sessions                empezar un escaneo en vivo
     POST   /api/scan/sessions/{id}/frame     mandar un cuadro (multipart "frame")
     DELETE /api/scan/sessions/{id}           cancelar el escaneo
@@ -41,24 +40,29 @@ from pathlib import Path
 import cv2
 import numpy as np
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import sessionmaker
 
 from api.auth import Auth
 from api.exams import register_exam_routes
+from api.results import register_result_routes
 from core.alignment import AlignmentError
 from core.layout import PAGE_SIZES_MM
 from core.live import READY, FrameStatus, LiveScanner
 from core.pipeline import GradedSheet, GradingError, grade_photo
 from storage import repository
-from storage.saving import save_graded
+from storage.images import get_image_store
+from storage.saving import SavedSheet, review_jpeg, save_graded
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
 WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"  # npm run build
 SESSION_TTL_S = 15 * 60  # un escaneo sin cuadros en este tiempo se descarta
 CORNER_ORDER = ["top_left", "top_right", "bottom_right", "bottom_left"]
 REVIEW_MAX_SIDE = 1600  # tamaño de la imagen de revisión que se manda al navegador
+NO_WEB_PAGE = ("<!doctype html><meta charset=utf-8><title>Calificador</title>"
+               "<p>Calificador: la API funciona, pero la web no está compilada. "
+               "Compílala con <code>cd web &amp;&amp; npm install &amp;&amp; npm run build</code> "
+               "y reinicia el servidor.</p>")
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +84,15 @@ class _ScanSession:
 
 
 def create_app(session_factory: sessionmaker, auth: Auth | None = None,
-               web_dist: Path | None = WEB_DIST) -> FastAPI:
+               web_dist: Path | None = WEB_DIST, images=None) -> FastAPI:
     """Crea la app. `session_factory` abre sesiones de la BD (una por
     petición) y `auth` dice quién hace cada petición (sin él, modo local
     sin sesión); así las pruebas pueden pasar una BD en memoria y llaves
-    de prueba. `web_dist` es la web compilada; si no existe, en `/` se
-    sirve la página de prueba."""
+    de prueba. `web_dist` es la web compilada; si no existe, `/` solo dice
+    cómo compilarla. `images` es dónde van las imágenes de revisión
+    (`storage/images.py`; por defecto, el de `.env`)."""
     auth = auth or Auth()
+    images = images or get_image_store()
     app = FastAPI(title="Calificador")
     scans: dict[str, _ScanSession] = {}
     scans_lock = threading.Lock()
@@ -97,10 +103,6 @@ def create_app(session_factory: sessionmaker, auth: Auth | None = None,
             with session_factory() as session:
                 return repository.get_exam(session, exam_id, owner_id=owner_id)
         return find_exam
-
-    @app.get("/prueba", include_in_schema=False)
-    def test_page():
-        return FileResponse(STATIC_DIR / "index.html")
 
     @app.get("/api/config")
     def config():
@@ -119,7 +121,8 @@ def create_app(session_factory: sessionmaker, auth: Auth | None = None,
                  "created_at": e.created_at.isoformat()}
                 for e in exams]
 
-    register_exam_routes(app, session_factory, auth)
+    register_exam_routes(app, session_factory, auth, images)
+    register_result_routes(app, session_factory, auth, images)
 
     @app.post("/api/scan/sessions")
     def start_scan(options: ScanOptions, owner_id: uuid.UUID = Depends(auth)):
@@ -156,7 +159,7 @@ def create_app(session_factory: sessionmaker, auth: Auth | None = None,
             payload = _status_payload(status, image)
             if status.state == READY:
                 if scan.result is None:  # se guarda una sola vez
-                    scan.result = _save(session_factory, status.graded, "vivo",
+                    scan.result = _save(session_factory, images, status.graded, "vivo",
                                         scan.options.dry_run, owner_id,
                                         capture=status.capture)
                 payload["result"] = scan.result
@@ -184,8 +187,8 @@ def create_app(session_factory: sessionmaker, auth: Auth | None = None,
         except (AlignmentError, GradingError) as exc:
             logger.warning("no se pudo calificar la foto: %s", exc)
             raise HTTPException(422, str(exc)) from exc
-        result = _save(session_factory, graded, Path(photo.filename or "foto").stem, dry_run,
-                       owner_id)
+        result = _save(session_factory, images, graded, Path(photo.filename or "foto").stem,
+                       dry_run, owner_id)
         logger.info("fin: foto calificada")
         return {"result": result}
 
@@ -199,8 +202,8 @@ def register_web(app: FastAPI, web_dist: Path | None) -> None:
     /examenes/nuevo, las resuelve el navegador)."""
     index = web_dist / "index.html" if web_dist else None
     if index is None or not index.exists():
-        logger.info("no hay web compilada (%s); en / va la página de prueba", web_dist)
-        app.get("/", include_in_schema=False)(lambda: FileResponse(STATIC_DIR / "index.html"))
+        logger.info("no hay web compilada (%s)", web_dist)
+        app.get("/", include_in_schema=False)(lambda: HTMLResponse(NO_WEB_PAGE))
         return
     logger.info("sirviendo la web desde %s", web_dist)
     root = web_dist.resolve()
@@ -253,26 +256,23 @@ def _status_payload(status: FrameStatus, image: np.ndarray) -> dict:
     }
 
 
-def _save(session_factory: sessionmaker, graded: GradedSheet, stem: str, dry_run: bool,
-          owner_id: uuid.UUID, capture: np.ndarray | None = None) -> dict:
+def _save(session_factory: sessionmaker, images, graded: GradedSheet, stem: str,
+          dry_run: bool, owner_id: uuid.UUID, capture: np.ndarray | None = None) -> dict:
     """Guarda la hoja (BD + imagen de revisión, como el CLI) a nombre del
     usuario y arma la respuesta con la nota."""
     stem = f"{stem}_{datetime.now():%Y%m%d_%H%M%S}"
     with session_factory() as session:
-        result_id, image_path, others = save_graded(session, graded, stem, dry_run,
-                                                    owner_id=owner_id)
-    if capture is not None:
-        name = f"{stem}_captura.jpg" if dry_run else f"{result_id}_captura.jpg"
-        cv2.imwrite(str(Path(image_path).with_name(name)), capture)
-    return _result_payload(graded, result_id, image_path, len(others), saved=not dry_run)
+        saved = save_graded(session, graded, stem, dry_run, owner_id=owner_id, capture=capture,
+                            images=images)
+    return _result_payload(graded, saved)
 
 
-def _result_payload(graded: GradedSheet, result_id: str, image_path: Path, duplicates: int,
-                    saved: bool) -> dict:
+def _result_payload(graded: GradedSheet, saved: SavedSheet) -> dict:
     result, reading = graded.result, graded.reading
+    jpg = review_jpeg(saved.review_jpg, REVIEW_MAX_SIDE)
     return {
-        "result_id": result_id if saved else None,
-        "saved": saved,
+        "result_id": saved.result_id,
+        "saved": saved.result_id is not None,
         "exam": {"id": graded.exam.id, "name": graded.exam.name},
         "qr_read": graded.qr_read,
         "student_id": result.student_id,
@@ -285,22 +285,6 @@ def _result_payload(graded: GradedSheet, result_id: str, image_path: Path, dupli
         "ambiguous": result.ambiguous,
         "blank": result.blank,
         "needs_review": result.needs_review,
-        "duplicates": duplicates,
-        "review_image": _review_data_url(image_path),
+        "duplicates": len(saved.others),
+        "review_image": "data:image/jpeg;base64," + base64.b64encode(jpg).decode() if jpg else None,
     }
-
-
-def _review_data_url(image_path: Path) -> str | None:
-    """La imagen de revisión como data URL (JPEG reducido), para mostrarla
-    sin tener que servir archivos del disco."""
-    image = cv2.imread(str(image_path))
-    if image is None:
-        logger.warning("no se pudo leer la imagen de revisión %s", image_path)
-        return None
-    h, w = image.shape[:2]
-    scale = REVIEW_MAX_SIDE / max(h, w)
-    if scale < 1:
-        image = cv2.resize(image, (round(w * scale), round(h * scale)),
-                           interpolation=cv2.INTER_AREA)
-    ok, jpg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    return "data:image/jpeg;base64," + base64.b64encode(jpg.tobytes()).decode() if ok else None

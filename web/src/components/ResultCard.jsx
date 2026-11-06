@@ -1,7 +1,10 @@
 // Nota de una hoja calificada (respuesta de /api/grade o del escaneo en vivo).
+import { Link } from "react-router-dom";
+
 const fmt = (n) => (Math.round(n * 100) / 100).toString();
 
 export default function ResultCard({ result: r, onAgain, onExit }) {
+  const results = `/examenes/${encodeURIComponent(r.exam.id)}/resultados`;
   return (
     <>
       <div className="card">
@@ -26,9 +29,18 @@ export default function ResultCard({ result: r, onAgain, onExit }) {
         {r.ambiguous.length > 0 && <div className="warn">Ambiguas (valen 0, revisar): {r.ambiguous.join(", ")}</div>}
         {r.blank.length > 0 && <div className="note">En blanco: {r.blank.join(", ")}</div>}
         {r.duplicates > 0 && (
-          <div className="warn">Esta matrícula ya tenía {r.duplicates} resultado(s): elige cuál cuenta con cli.results.</div>
+          <div className="warn">
+            Esta matrícula ya tenía {r.duplicates} hoja(s).{" "}
+            <Link to={`${results}?filtro=duplicates`}>Elige cuál cuenta</Link>
+          </div>
         )}
         <div className="note" style={{ marginTop: 8 }}>{r.saved ? "Guardado." : "Sin guardar (solo prueba)."}</div>
+        {r.saved && (
+          <div className="row" style={{ marginTop: 6 }}>
+            {r.needs_review && <Link to={`${results}/${r.result_id}`}>Corregir esta hoja</Link>}
+            <Link to={results}>Ver resultados del examen</Link>
+          </div>
+        )}
         <button onClick={onAgain}>Calificar otro</button>
         <button className="secondary" onClick={onExit}>Salir</button>
       </div>

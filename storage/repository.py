@@ -13,12 +13,18 @@ reglas del proyecto:
    recalifican los resultados guardados.
 3. **Matrícula escaneada dos veces:** se guardan todos los resultados y
    ninguno queda `selected` hasta que el profesor elija uno con
-   `choose_result`.
+   `choose_result`. Si al corregir o borrar queda una sola hoja de esa
+   matrícula, esa queda elegida.
+4. **Corrección a mano** (`correct_result`): el profesor puede cambiar
+   cualquier respuesta leída y la matrícula; se recalifica y la
+   corrección queda guardada en `answers`, así que si después cambia la
+   clave del examen se respeta.
 
 Cada función hace commit al terminar.
 """
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -53,6 +59,10 @@ class ExamLockedError(StorageError):
 
 class ResultNotFoundError(StorageError):
     pass
+
+
+class ResultValidationError(StorageError):
+    """Una corrección a mano con matrícula o respuesta que no valen."""
 
 
 @dataclass
@@ -282,6 +292,90 @@ def set_image_path(session: Session, result_id: uuid.UUID, image_path: str) -> N
         raise ResultNotFoundError(f"No existe el resultado {result_id}")
     row.image_path = image_path
     session.commit()
+
+
+def correct_result(
+    session: Session,
+    row: ResultRow,
+    exam: Exam,
+    answers: dict[int, str | None] | None = None,
+    student_id: str | None = None,
+) -> ResultRow:
+    """Corrección a mano de una hoja: `answers` cambia las respuestas leídas
+    ({número: letra}, None = en blanco) y `student_id` la matrícula. Lo
+    corregido deja de estar ambiguo; se recalifica con la clave actual."""
+    from core.scoring import score
+
+    answers = answers or {}
+    logger.info("inicio: corrigiendo resultado %s (%d respuestas, matrícula %s)",
+                row.id, len(answers), student_id if student_id is not None else "sin cambio")
+    reading = row_to_reading(row)
+    numbers = {q.number for s in exam.sections for q in s.questions}
+    for number, letter in answers.items():
+        if number not in numbers:
+            raise ResultValidationError(f"El examen no tiene la pregunta {number}.")
+        if letter is not None and letter not in exam.options:
+            raise ResultValidationError(
+                f"Pregunta {number}: '{letter}' no es una opción ({', '.join(exam.options)}).")
+        logger.debug("pregunta %d: %s -> %s", number, reading.answers.get(number), letter)
+        reading.answers[number] = letter
+        reading.ambiguous = [n for n in reading.ambiguous if n != number]
+        reading.blank = [n for n in reading.blank if n != number]
+        if letter is None:
+            reading.blank.append(number)
+    reading.blank.sort()
+
+    old_student_id = row.student_id
+    if student_id is not None and student_id != old_student_id:
+        if not re.fullmatch(r"[0-9]+", student_id) or len(student_id) != exam.student_id_digits:
+            raise ResultValidationError(
+                f"La matrícula debe tener {exam.student_id_digits} dígitos (0-9).")
+        reading.student_id = reading.student_id_raw = student_id
+        others = results_of_student(session, row.exam_id, student_id, exclude=row.id)
+        for other in others:
+            other.selected = False
+        row.selected = not others
+        if others:
+            logger.warning("la matrícula %s ya tenía %d hoja(s): quedan todas sin elegir",
+                           student_id, len(others))
+
+    _fill_result_row(row, score(exam, reading), reading)
+    session.flush()
+    if old_student_id is not None and old_student_id != row.student_id:
+        _select_if_single(session, row.exam_id, old_student_id)
+    session.commit()
+    logger.info("fin: resultado %s corregido (nota %g/%g, revisar=%s)",
+                row.id, row.final_score, row.max_score, row.needs_review)
+    return row
+
+
+def delete_result(session: Session, row: ResultRow) -> None:
+    """Borra una hoja (por ejemplo, un escaneo malo). Si de su matrícula
+    queda una sola hoja, esa queda elegida."""
+    logger.info("inicio: borrando resultado %s (matrícula %s)", row.id, row.student_id_raw)
+    exam_id, student_id = row.exam_id, row.student_id
+    session.delete(row)
+    session.flush()
+    if student_id is not None:
+        _select_if_single(session, exam_id, student_id)
+    session.commit()
+    logger.info("fin: resultado borrado")
+
+
+def results_of_student(session: Session, exam_id: str, student_id: str,
+                  exclude: uuid.UUID | None = None) -> list[ResultRow]:
+    query = select(ResultRow).where(ResultRow.exam_id == exam_id,
+                                    ResultRow.student_id == student_id)
+    if exclude is not None:
+        query = query.where(ResultRow.id != exclude)
+    return list(session.scalars(query.order_by(ResultRow.scanned_at)))
+
+
+def _select_if_single(session: Session, exam_id: str, student_id: str) -> None:
+    rows = results_of_student(session, exam_id, student_id)
+    if len(rows) == 1 and not rows[0].selected:
+        rows[0].selected = True
+        logger.info("matrícula %s: queda una sola hoja (%s) y se elige", student_id, rows[0].id)
 
 
 def row_to_reading(row: ResultRow) -> SheetReading:

@@ -24,6 +24,7 @@ from api.main import create_app
 from core import live
 from storage import repository
 from storage.db import init_db
+from storage.images import LocalImageStore
 from core.alignment import detect_corner_markers
 from core.qr import read_qr
 from core.layout import build_layout
@@ -63,8 +64,8 @@ def db():
 
 @pytest.fixture
 def client(db, tmp_path, monkeypatch):
-    monkeypatch.setattr(storage.saving, "RESULTS_IMG_DIR", tmp_path)
-    return TestClient(create_app(db, web_dist=None))
+    monkeypatch.setattr(storage.saving, "RESULTS_IMG_DIR", tmp_path / "prueba")
+    return TestClient(create_app(db, web_dist=None, images=LocalImageStore(tmp_path)))
 
 
 def count(db) -> int:
@@ -166,9 +167,10 @@ def auth_client(tmp_path, monkeypatch):
     factory = sessionmaker(engine)
     with factory() as s:
         repository.create_exam(s, EXAM, owner_id=USER_A)
-    monkeypatch.setattr(storage.saving, "RESULTS_IMG_DIR", tmp_path)
+    monkeypatch.setattr(storage.saving, "RESULTS_IMG_DIR", tmp_path / "prueba")
     auth = Auth(SUPABASE_URL, "sb_publishable_prueba", signing_key=KEY.public_key())
-    return TestClient(create_app(factory, auth, web_dist=None)), factory
+    images = LocalImageStore(tmp_path)
+    return TestClient(create_app(factory, auth, web_dist=None, images=images)), factory
 
 
 def test_config_says_login_is_needed(auth_client):
@@ -240,7 +242,8 @@ def test_legacy_hs256_secret(tmp_path, monkeypatch):
     engine = memory_engine()
     init_db(engine)
     client = TestClient(create_app(sessionmaker(engine),
-                                   Auth(SUPABASE_URL, jwt_secret=secret), web_dist=None))
+                                   Auth(SUPABASE_URL, jwt_secret=secret), web_dist=None,
+                                   images=LocalImageStore(tmp_path)))
     now = int(time.time())
     good = jwt.encode({"sub": str(USER_A), "aud": "authenticated", "iss": f"{SUPABASE_URL}/auth/v1",
                        "exp": now + 600}, secret, algorithm="HS256")
@@ -362,14 +365,13 @@ def test_serves_react_build_with_route_fallback(db, tmp_path):
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_text("<div id=root>react</div>")
     (dist / "assets" / "app.js").write_text("console.log(1)")
-    client = TestClient(create_app(db, web_dist=dist))
+    client = TestClient(create_app(db, web_dist=dist, images=LocalImageStore(tmp_path)))
     assert "react" in client.get("/").text
     assert "react" in client.get("/examenes/nuevo").text  # ruta de React
     assert client.get("/assets/app.js").text == "console.log(1)"
     assert "react" in client.get("/../../etc/passwd").text  # no se sale de dist
     assert client.get("/api/no-existe").status_code == 404
     assert client.get("/api/exams").status_code == 200
-    assert "Calificador" in client.get("/prueba").text
 
 
 def test_a4_sheet_is_graded_with_a4_layout(auth_client):
@@ -388,3 +390,102 @@ def test_a4_sheet_is_graded_with_a4_layout(auth_client):
     r = client.post("/api/grade", files={"photo": ("a4.jpg", photo, "image/jpeg")},
                     headers=a).json()["result"]
     assert r["student_id"] == "40213" and r["ambiguous"] == [] and r["blank"] == []
+
+
+# --- Resultados ---
+
+def grade_as(client, user, seed=2) -> dict:
+    photo = jpg(simulate_photo(SHEET, seed=seed))
+    resp = client.post("/api/grade", files={"photo": ("foto.jpg", photo, "image/jpeg")},
+                       headers=as_user(user))
+    assert resp.status_code == 200
+    return resp.json()["result"]
+
+
+def test_results_list_and_detail(auth_client):
+    client, _ = auth_client
+    a = as_user(USER_A)
+    rid = grade_as(client, USER_A)["result_id"]
+    data = client.get(f"/api/exams/{EXAM.id}/results", headers=a).json()
+    assert data["exam"] == {"id": EXAM.id, "name": EXAM.name}
+    [row] = data["results"]
+    assert row["id"] == rid and row["student_id"] == STUDENT_ID and row["selected"]
+    assert client.get(f"/api/results/{rid}", headers=a).json() == row
+    image = client.get(f"/api/results/{rid}/review.jpg", headers=a)
+    assert image.status_code == 200 and image.content.startswith(b"\xff\xd8")
+
+
+def test_other_user_cannot_touch_my_results(auth_client):
+    client, _ = auth_client
+    rid = grade_as(client, USER_A)["result_id"]
+    b = as_user(USER_B)
+    for method, url in [
+        ("get", f"/api/exams/{EXAM.id}/results"),
+        ("get", f"/api/exams/{EXAM.id}/results.csv"),
+        ("get", f"/api/exams/{EXAM.id}/results.xlsx"),
+        ("get", f"/api/results/{rid}"),
+        ("get", f"/api/results/{rid}/review.jpg"),
+        ("post", f"/api/results/{rid}/choose"),
+        ("delete", f"/api/results/{rid}"),
+        ("get", "/api/results/no-es-un-uuid"),
+    ]:
+        assert client.request(method, url, headers=b).status_code == 404, url
+    assert client.patch(f"/api/results/{rid}", json={"student_id": "000000"},
+                        headers=b).status_code == 404
+    assert client.get(f"/api/results/{rid}", headers=as_user(USER_A)).json()["student_id"] \
+        == STUDENT_ID
+
+
+def test_correct_result_through_api(auth_client):
+    client, _ = auth_client
+    a = as_user(USER_A)
+    graded = grade_as(client, USER_A)
+    rid = graded["result_id"]
+    number = graded["ambiguous"][0]  # la hoja de prueba trae ambiguas
+    right = EXAM.question_by_number(number).correct_answer
+    resp = client.patch(f"/api/results/{rid}", json={"answers": {str(number): right.lower()}},
+                        headers=a)
+    assert resp.status_code == 200
+    fixed = resp.json()
+    assert fixed["answers"][str(number)] == right and number not in fixed["ambiguous"]
+    assert fixed["final_score"] > graded["final_score"] and fixed["duplicates"] == 0
+
+    bad = client.patch(f"/api/results/{rid}", json={"student_id": "12"}, headers=a)
+    assert bad.status_code == 422 and "dígitos" in bad.json()["detail"]
+
+
+def test_duplicates_choose_and_delete(auth_client, tmp_path):
+    client, _ = auth_client
+    a = as_user(USER_A)
+    first = grade_as(client, USER_A, seed=2)["result_id"]
+    second = grade_as(client, USER_A, seed=3)
+    assert second["duplicates"] == 1
+    url = f"/api/exams/{EXAM.id}/results"
+    assert not any(r["selected"] for r in client.get(url, headers=a).json()["results"])
+
+    assert client.post(f"/api/results/{first}/choose", headers=a).status_code == 200
+    selected = {r["id"]: r["selected"] for r in client.get(url, headers=a).json()["results"]}
+    assert selected == {first: True, second["result_id"]: False}
+
+    image = next(tmp_path.rglob(f"{second['result_id']}.jpg"))
+    assert client.delete(f"/api/results/{second['result_id']}", headers=a).status_code == 200
+    assert not image.exists()
+    assert [r["id"] for r in client.get(url, headers=a).json()["results"]] == [first]
+
+
+@pytest.mark.parametrize("fmt", ["csv", "xlsx"])
+def test_export_results(auth_client, fmt):
+    import io
+    import pandas as pd
+
+    client, _ = auth_client
+    grade_as(client, USER_A)
+    resp = client.get(f"/api/exams/{EXAM.id}/results.{fmt}", headers=as_user(USER_A))
+    assert resp.status_code == 200
+    assert f"_resultados.{fmt}" in resp.headers["content-disposition"]
+    read = pd.read_csv if fmt == "csv" else pd.read_excel
+    df = read(io.BytesIO(resp.content), dtype={"matricula": str})
+    assert list(df["matricula"]) == [STUDENT_ID]
+    assert df.loc[0, "estado"] == "revisar preguntas"  # la hoja de prueba trae ambiguas
+    assert client.get(f"/api/exams/{EXAM.id}/results.pdf",
+                      headers=as_user(USER_A)).status_code == 404

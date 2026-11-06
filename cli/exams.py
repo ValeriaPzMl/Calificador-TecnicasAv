@@ -24,6 +24,7 @@ from cli.make_sheet import write_sheet
 from core.layout import PAGE_SIZES_MM, LayoutError, build_layout
 from models.exam import ExamValidationError, load_exam
 from storage import repository
+from storage.saving import delete_exam_saved
 from storage.db import open_session
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ def cmd_delete(session, args) -> None:
         if input("Escribe el id del examen para confirmar: ").strip() != exam.id:
             print("Cancelado.")
             return
-    deleted = repository.delete_exam(session, exam.id)
+    deleted = delete_exam_saved(session, exam.id)  # también sus imágenes de revisión
     print(f"OK. Examen '{exam.id}' borrado junto con {deleted} resultados.")
 
 

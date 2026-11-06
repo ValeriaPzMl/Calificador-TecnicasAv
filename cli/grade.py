@@ -26,7 +26,7 @@ from core.pipeline import GradedSheet, GradingError, grade_photo
 from core.preprocessing import load_image
 from storage import repository
 from storage.db import open_session
-from storage.saving import save_graded
+from storage.saving import SavedSheet, save_graded
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -61,13 +61,12 @@ def grade_one(session, path: Path, args) -> bool:
         print(f"ERROR {path.name}: {exc}")
         return False
 
-    result_id, image_path, others = save_graded(session, graded, path.stem, args.dry_run)
-    print_result(path.name, graded, result_id, image_path, others)
+    saved = save_graded(session, graded, path.stem, args.dry_run)
+    print_result(path.name, graded, saved)
     return True
 
 
-def print_result(name: str, graded: GradedSheet, result_id: str, image_path: Path,
-                 others: list) -> None:
+def print_result(name: str, graded: GradedSheet, saved: SavedSheet) -> None:
     """Imprime el resumen de una hoja calificada."""
     result, reading = graded.result, graded.reading
     print(f"OK {name}: examen '{graded.exam.id}'"
@@ -82,12 +81,12 @@ def print_result(name: str, graded: GradedSheet, result_id: str, image_path: Pat
         print(f"    Ambiguas (valen 0, REVISAR): {result.ambiguous}")
     if result.blank:
         print(f"    En blanco: {result.blank}")
-    if others:
-        print(f"    AVISO: la matrícula {result.student_id} ya tenía {len(others)} "
+    if saved.others:
+        print(f"    AVISO: la matrícula {result.student_id} ya tenía {len(saved.others)} "
               "resultado(s). Se guardaron todos; elige cuál cuenta con:")
         print(f"      python -m cli.results duplicates {graded.exam.id}")
-    print(f"    Resultado: {result_id}")
-    print(f"    Revisión: {image_path}")
+    print(f"    Resultado: {saved.result_id or '(no guardado)'}")
+    print(f"    Revisión: {saved.location}")
 
 
 def main() -> None:

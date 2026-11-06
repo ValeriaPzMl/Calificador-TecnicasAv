@@ -1,4 +1,4 @@
-// Mis exámenes: lista con bajar PDF, calificar, editar y borrar.
+// Mis exámenes: lista con bajar PDF, calificar, ver resultados, editar y borrar.
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiJson, downloadFile } from "../lib/api.js";
@@ -110,6 +110,9 @@ export default function Exams() {
             </button>
             <button className="secondary" onClick={() => navigate(`/calificar?examen=${encodeURIComponent(exam.id)}`)}>
               Calificar
+            </button>
+            <button className="secondary" onClick={() => navigate(`/examenes/${encodeURIComponent(exam.id)}/resultados`)}>
+              Resultados ({exam.results})
             </button>
             <button className="secondary" onClick={() => navigate(`/examenes/${encodeURIComponent(exam.id)}`)}>
               Editar

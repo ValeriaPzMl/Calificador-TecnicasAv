@@ -15,14 +15,13 @@ Es el mismo flujo que tendrá la web:
 3. Opciones: [N] calificar otro (vuelve a abrir la cámara) · [Q] salir.
 
 Durante el escaneo, Q o Esc sale. Igual que con `cli.grade`, por cada hoja
-se guarda la imagen de revisión y también el cuadro capturado
-(data/processed/results/<examen>/).
+se guarda la imagen de revisión (Supabase Storage o disco, ver
+`storage/images.py`); el cuadro capturado solo se guarda en disco.
 """
 
 import argparse
 import logging
 from datetime import datetime
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -237,15 +236,12 @@ def main() -> None:
             status = scan_one(args.camera, scanner)
 
             stem = "vivo_" + datetime.now().strftime("%Y%m%d_%H%M%S")
-            result_id, image_path, others = save_graded(session, status.graded, stem,
-                                                        args.dry_run)
-            capture_name = (f"{stem}_captura.jpg" if args.dry_run
-                            else f"{result_id}_captura.jpg")
-            cv2.imwrite(str(Path(image_path).with_name(capture_name)), status.capture)
-            print_result("cámara", status.graded, result_id, image_path, others)
+            saved = save_graded(session, status.graded, stem, args.dry_run,
+                                capture=status.capture)
+            print_result("cámara", status.graded, saved)
             graded_count += 1
 
-            show(draw_result(cv2.imread(str(image_path)), status, others, not args.dry_run))
+            show(draw_result(saved.review, status, saved.others, not args.dry_run))
             while True:
                 key = wait_key(0)
                 if key in (ord("q"), 27):

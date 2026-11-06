@@ -1,5 +1,5 @@
 """
-Levanta la API y la página de prueba para calificar desde el celular.
+Levanta la API y la web para calificar desde el celular.
 
 Uso:
     python -m api.serve              # https://<ip-de-la-compu>:8000
@@ -20,6 +20,7 @@ Vercel) el HTTPS ya es real y no sale ese aviso.
 import argparse
 import ipaddress
 import logging
+import os
 import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +32,7 @@ from sqlalchemy.orm import sessionmaker
 from api.auth import Auth
 from api.main import WEB_DIST, create_app
 from cli.logs import add_verbose_flag, setup_logging
+from storage.images import ImageStoreError, get_image_store
 from storage.db import init_db, make_engine
 
 CERT_DIR = Path(__file__).resolve().parent.parent / "data" / "certs"
@@ -126,7 +128,12 @@ def main() -> None:
 
     engine = make_engine()
     init_db(engine)
-    app = create_app(sessionmaker(engine), Auth.from_env())
+    images = get_image_store()
+    try:
+        images.ensure_ready()  # en Supabase: crea el bucket privado si no existe
+    except ImageStoreError as exc:
+        raise SystemExit(f"ERROR: {exc} Revisa SUPABASE_SECRET_KEY en .env.")
+    app = create_app(sessionmaker(engine), Auth.from_env(), images=images)
 
     ip = lan_ip()
     ssl = {}
@@ -140,8 +147,13 @@ def main() -> None:
     if not args.http:
         print("\nSi sale \"la conexión no es privada\": Configuración avanzada → Continuar.")
     if not (WEB_DIST / "index.html").exists():
-        print("\nAVISO: la web no está compilada; en / sale la página de prueba.")
+        print("\nAVISO: la web no está compilada; en / solo sale cómo compilarla.")
         print("       Compílala con: cd web && npm install && npm run build")
+    print(f"Imágenes de revisión: {images.kind}.")
+    if os.environ.get("SUPABASE_URL"):
+        prefix = ".".join(ip.split(".")[:3]) + ".*"
+        print(f"\nPara \"recuperar contraseña\", en Supabase → Authentication → URL Configuration"
+              f"\n→ Redirect URLs debe estar: {url.replace(ip, prefix)}/**")
     print("Ctrl+C para detener.\n")
 
     # log_config=None: uvicorn usa la misma configuración de logs que el resto

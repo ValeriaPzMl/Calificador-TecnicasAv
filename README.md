@@ -8,7 +8,7 @@ de la hoja de respuestas.
 3. Los alumnos rellenan las burbujas, incluida su **matrícula**.
 4. Le tomas foto a cada hoja y el sistema lee la matrícula y las respuestas,
    calcula la **nota** y la guarda.
-5. Exportas los resultados a CSV (se abre en Excel).
+5. Revisas lo dudoso y exportas los resultados a Excel o CSV.
 
 No hace falta escanear ni que la foto salga derecha: la hoja lleva cuatro
 marcadores en las esquinas y un código QR, así que se reconoce aunque esté
@@ -153,7 +153,11 @@ lectura sea buena con una webcam, la hoja debe ocupar casi todo el cuadro.
 Todo lo anterior se puede hacer desde el navegador, sin terminal: crear
 cuenta, crear y editar exámenes (con botones por pregunta o pegando las
 respuestas, p. ej. `ABDCA`), descargar el PDF en carta o A4, calificar con
-la cámara o con fotos, y borrar exámenes.
+la cámara o con fotos, y borrar exámenes. En **Resultados** (botón en cada
+examen) se ven las notas, se corrigen a mano las preguntas ambiguas o una
+matrícula mal leída (con la imagen de revisión al lado; la nota se
+recalcula), se elige cuál hoja cuenta cuando un alumno se escaneó dos
+veces, y se exporta a Excel o CSV.
 
 La primera vez hay que compilar la web (necesita Node.js:
 `sudo dnf install nodejs` en Fedora):
@@ -245,19 +249,42 @@ propios exámenes y resultados.
    - `DATABASE_URL`: botón *Connect* → **Session pooler** → URI (con tu
      contraseña).
    - `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY`: *Project Settings → API
-     Keys*. Nunca pongas la llave `secret` / `service_role`.
+     Keys*. La publishable sí la ve el navegador.
+   - `SUPABASE_SECRET_KEY`: en la misma página, **Secret keys** (`sb_secret_…`).
+     Solo la usa el servidor, para guardar las imágenes de revisión en
+     Supabase Storage; nunca sale al navegador. No la compartas ni la subas
+     a git. Sin ella, las imágenes se guardan en disco.
 3. **Crea las tablas:**
    ```bash
    alembic upgrade head
    ```
    En *Table Editor* aparecen `exams`, `sections`, `questions` y `results`,
-   con RLS activado (cada usuario solo puede ver sus filas).
+   con RLS activado (cada usuario solo puede ver sus filas). También
+   `alembic_version`, con RLS y sin políticas (nadie la lee por la API).
+   Corre `alembic upgrade head` otra vez cada que haya migraciones nuevas.
+
+   El aviso naranja *Leaked password protection* del Security Advisor solo
+   se puede activar en el plan Pro; en el plan Free se queda así.
 4. **Usuarios:** cada profesor crea su cuenta en la web ("Crear cuenta").
    En *Authentication → Sign In / Providers* deben estar activos **Allow
    new users to sign up** y, para entrar sin confirmar el correo,
    desactivado **Confirm email**. También se pueden crear en
    *Authentication → Users → Add user*.
-5. **Arranca** `python -m api.serve`: la página pide iniciar sesión.
+5. **Recuperar contraseña:** en *Authentication → URL Configuration*
+   agrega a **Redirect URLs** la dirección que imprime `python -m api.serve`
+   al arrancar (p. ej. `https://10.0.0.*:8000/**`; el `*` sirve si cambia
+   el último número de la IP) y `http://localhost:5173/**` si usas
+   `npm run dev`. Si la dirección no coincide, Supabase manda el enlace a
+   su *Site URL* (por defecto `localhost:3000`) y en el celular no abre.
+   El servicio de correo que trae Supabase solo manda unos pocos correos
+   por hora y **solo a correos del equipo del proyecto** (*Organization →
+   Team*). Para que les llegue a otros profesores hay que configurar un
+   SMTP propio en *Authentication → Emails → SMTP Settings* (p. ej. Resend
+   o Brevo, tienen plan gratis).
+6. **Arranca** `python -m api.serve`: la página pide iniciar sesión. La
+   primera vez crea el bucket privado `revisiones` en *Storage* (las
+   imágenes de revisión de las hojas). Al arrancar dice dónde se guardan
+   las imágenes.
 
 Para que los comandos (`cli.exams`, `cli.grade`, …) guarden a nombre de
 alguien, pon en el `.env` `CALIFICADOR_OWNER_ID=<uuid del usuario>` (está
@@ -272,6 +299,14 @@ python scripts/migrate_sqlite.py --owner admin@correo.com
 
 Copia exámenes y resultados con los mismos ids (las hojas impresas siguen
 sirviendo), se salta lo que ya esté y no toca la base local.
+
+Las imágenes de revisión de hojas calificadas antes de poner
+`SUPABASE_SECRET_KEY` siguen en disco; para subirlas a Storage:
+
+```bash
+python scripts/upload_images.py --dry-run   # ver cuántas subiría
+python scripts/upload_images.py             # (--delete-local para borrarlas de disco)
+```
 
 Los ids de examen son únicos entre **todos** los usuarios (van en el QR),
 así que dos profesores no pueden tener los dos un examen `ingles01`.
@@ -309,13 +344,15 @@ docs/       diagramas
 ```
 
 Los datos se guardan en `data/calificador.db` (SQLite), o en Supabase si
-el `.env` tiene `DATABASE_URL` (ver arriba).
+el `.env` tiene `DATABASE_URL` (ver arriba). Las imágenes de revisión, en
+`data/processed/results/` o en Supabase Storage si está
+`SUPABASE_SECRET_KEY`.
 
 ## Pruebas
 
 ```bash
 python -m pytest
-cd web && npm test      # lógica del editor de exámenes
+cd web && npm test      # lógica del editor y de resultados
 ```
 
 Generan hojas por código, las contestan con distintos tipos de marca
@@ -328,5 +365,5 @@ lectura, la nota y las reglas de la base de datos.
 Funciona por línea de comandos (con fotos o con la cámara en vivo) y desde
 el navegador del celular en la red local, y está probado con hojas
 simuladas y con fotos reales de celular. Con Supabase, cada profesor
-inicia sesión y tiene sus propios exámenes. Está en desarrollo la versión
-web completa (crear exámenes, ver resultados).
+inicia sesión (y puede recuperar su contraseña por correo) y tiene sus
+propios exámenes, resultados e imágenes. Falta publicarlo en internet.
