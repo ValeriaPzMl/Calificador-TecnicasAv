@@ -1,0 +1,24 @@
+# Blueprint de Render: un servicio web con el Dockerfile de este repo.
+# En Render: New → Blueprint → elige este repositorio. Las variables con
+# sync: false las pide al crear el servicio (cópialas de tu .env).
+services:
+  - type: web
+    name: calificador
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/config
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO

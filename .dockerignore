@@ -1,0 +1,15 @@
+# Nada de esto va en la imagen (y .env NUNCA: las llaves van en Render)
+.env
+.env.*
+.git
+venv
+data
+docs
+tests
+templates
+scripts
+web/node_modules
+web/dist
+**/__pycache__
+.pytest_cache
+*.md

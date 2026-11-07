@@ -311,6 +311,35 @@ python scripts/upload_images.py             # (--delete-local para borrarlas de 
 Los ids de examen son únicos entre **todos** los usuarios (van en el QR),
 así que dos profesores no pueden tener los dos un examen `ingles01`.
 
+## Publicar en internet (Render)
+
+La app publicada es un solo servicio en [Render](https://render.com) (plan
+gratis): un contenedor (`Dockerfile`) que compila la web y sirve la web y la
+API en la misma dirección, con HTTPS. La base de datos, las cuentas y las
+imágenes siguen en Supabase.
+
+1. Sube los cambios a GitHub (`git push`).
+2. En Render: entra con tu cuenta de GitHub → **New → Blueprint** → elige
+   este repositorio. Lee `render.yaml` y pide las variables; cópialas de tu
+   `.env`: `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` y
+   `SUPABASE_SECRET_KEY`. La primera vez tarda unos minutos en construir.
+3. Render te da una dirección como `https://calificador-xxxx.onrender.com`.
+   En Supabase → *Authentication → URL Configuration*: pon esa dirección en
+   **Site URL** y agrega `https://calificador-xxxx.onrender.com/**` a
+   **Redirect URLs** (para recuperar contraseña).
+4. Cada `git push` a `main` vuelve a publicar solo.
+
+Si hay migraciones nuevas, córrelas desde tu compu (`alembic upgrade head`)
+antes de hacer push. La app no arranca si falta alguna variable o si
+`DATABASE_URL` no es Postgres (para no quedar abierta sin login).
+
+En el plan gratis el servicio se duerme tras 15 minutos sin uso: la primera
+visita después tarda cerca de un minuto en abrir. Los logs están en el
+panel del servicio, pestaña *Logs* (`LOG_LEVEL=DEBUG` para ver el detalle).
+
+Para probar la imagen en tu compu:
+`podman build -t calificador . && podman run --env-file .env -p 8000:8000 calificador`.
+
 ## Cómo funciona
 
 1. **Encuentra la hoja:** detecta los cuatro marcadores de las esquinas y
@@ -366,4 +395,5 @@ Funciona por línea de comandos (con fotos o con la cámara en vivo) y desde
 el navegador del celular en la red local, y está probado con hojas
 simuladas y con fotos reales de celular. Con Supabase, cada profesor
 inicia sesión (y puede recuperar su contraseña por correo) y tiene sus
-propios exámenes, resultados e imágenes. Falta publicarlo en internet.
+propios exámenes, resultados e imágenes. Se publica en Render (ver
+[Publicar en internet](#publicar-en-internet-render)).
